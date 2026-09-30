@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "module": "node16",
+    "moduleResolution": "node16",
     "lib": ["ES2022"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -14,14 +14,13 @@
     "sourceMap": true,
     "outDir": "dist",
     "rootDir": ".",
-    "baseUrl": ".",
     "paths": {
-      "@app/*": ["src/app/*"],
-      "@config": ["src/config/index.ts"],
-      "@jobs/*": ["src/jobs/*"],
-      "@config/*": ["src/config/*"],
-      "@modules/*": ["src/modules/*"],
-      "@shared/*": ["src/shared/*"]
+      "@app/*": ["./src/app/*"],
+      "@config": ["./src/config/index.ts"],
+      "@jobs/*": ["./src/jobs/*"],
+      "@config/*": ["./src/config/*"],
+      "@modules/*": ["./src/modules/*"],
+      "@shared/*": ["./src/shared/*"]
     }
   },
   // ts-node compiles only what the entrypoint imports, so an ambient declaration file that
