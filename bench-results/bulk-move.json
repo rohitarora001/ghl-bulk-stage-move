@@ -1,6 +1,6 @@
 {
   "name": "bulk-move",
-  "generatedAt": "2026-09-30T12:19:02.249Z",
+  "generatedAt": "2026-09-30T17:13:18.880Z",
   "hardware": {
     "platform": "win32",
     "release": "10.0.26200",
@@ -12,27 +12,27 @@
   },
   "dataset": {
     "workspaceId": "d3022900-4ed8-49d7-940c-f769a6ac728d",
-    "totalOpportunities": 500000,
+    "totalOpportunities": 500060,
     "sourceStage": {
-      "id": "5464599e-f40d-4a0a-bab7-8b76569e8cad",
-      "name": "New Lead",
-      "count": 109912
+      "id": "1d62cc1c-96d5-4367-a3cb-6169ec463013",
+      "name": "Contract Sent",
+      "count": 67404
     },
     "targetStage": {
-      "id": "7fcea786-def9-4083-8111-e97367c4db77",
-      "name": "On Hold",
-      "count": 7483
+      "id": "ec66b183-f169-4d3d-a965-963450388c27",
+      "name": "Qualified",
+      "count": 15326
     }
   },
   "submission": {
     "stageOnly": {
-      "latencyMs": 1747.47,
+      "latencyMs": 1218.99,
       "totalCount": 50000,
       "matchedCount": null,
       "truncated": true
     },
     "broad": {
-      "latencyMs": 1600.81,
+      "latencyMs": 1141.89,
       "totalCount": 50000,
       "matchedCount": null,
       "truncated": true
@@ -43,96 +43,116 @@
     "done": 50000,
     "skippedConflict": 0,
     "failed": 0,
-    "wallClockMs": 8964,
-    "itemsPerSecond": 5577.9,
-    "firstThirdItemsPerSecond": 5107,
-    "lastThirdItemsPerSecond": 6362.7,
-    "degradationRatio": 1.25,
+    "wallClockMs": 11261,
+    "itemsPerSecond": 4440.1,
+    "firstThirdItemsPerSecond": 3286.8,
+    "lastThirdItemsPerSecond": 5167.2,
+    "degradationRatio": 1.57,
     "buckets": [
       {
-        "atSeconds": 0.56,
+        "atSeconds": 0.55,
         "done": 0,
         "itemsPerSecond": 0
       },
       {
         "atSeconds": 1.09,
-        "done": 1500,
-        "itemsPerSecond": 2853.5
+        "done": 0,
+        "itemsPerSecond": 0
       },
       {
-        "atSeconds": 1.62,
-        "done": 4500,
-        "itemsPerSecond": 5701
+        "atSeconds": 1.63,
+        "done": 0,
+        "itemsPerSecond": 0
       },
       {
-        "atSeconds": 2.14,
+        "atSeconds": 2.15,
+        "done": 3000,
+        "itemsPerSecond": 5769.3
+      },
+      {
+        "atSeconds": 2.68,
+        "done": 6000,
+        "itemsPerSecond": 5628
+      },
+      {
+        "atSeconds": 3.23,
         "done": 7500,
-        "itemsPerSecond": 5692
+        "itemsPerSecond": 2747.8
       },
       {
-        "atSeconds": 2.67,
+        "atSeconds": 3.77,
         "done": 10500,
-        "itemsPerSecond": 5719
+        "itemsPerSecond": 5575.5
       },
       {
-        "atSeconds": 3.21,
+        "atSeconds": 4.28,
         "done": 13500,
-        "itemsPerSecond": 5569.7
+        "itemsPerSecond": 5810.4
       },
       {
-        "atSeconds": 3.73,
-        "done": 17500,
-        "itemsPerSecond": 7706.6
+        "atSeconds": 4.82,
+        "done": 16500,
+        "itemsPerSecond": 5563.7
       },
       {
-        "atSeconds": 4.25,
-        "done": 21000,
-        "itemsPerSecond": 6671.1
+        "atSeconds": 5.34,
+        "done": 19500,
+        "itemsPerSecond": 5725.7
       },
       {
-        "atSeconds": 4.77,
-        "done": 24000,
-        "itemsPerSecond": 5792.2
+        "atSeconds": 5.94,
+        "done": 22500,
+        "itemsPerSecond": 5064.2
       },
       {
-        "atSeconds": 5.31,
-        "done": 27000,
-        "itemsPerSecond": 5532.1
+        "atSeconds": 6.47,
+        "done": 25500,
+        "itemsPerSecond": 5603.2
       },
       {
-        "atSeconds": 5.85,
-        "done": 30000,
-        "itemsPerSecond": 5597.4
+        "atSeconds": 7.01,
+        "done": 29000,
+        "itemsPerSecond": 6533.7
       },
       {
-        "atSeconds": 6.36,
-        "done": 34000,
-        "itemsPerSecond": 7718.9
+        "atSeconds": 7.53,
+        "done": 32500,
+        "itemsPerSecond": 6712.1
       },
       {
-        "atSeconds": 6.88,
-        "done": 37500,
-        "itemsPerSecond": 6818.2
+        "atSeconds": 8.06,
+        "done": 35500,
+        "itemsPerSecond": 5705.5
       },
       {
-        "atSeconds": 7.39,
+        "atSeconds": 8.58,
+        "done": 38500,
+        "itemsPerSecond": 5668.6
+      },
+      {
+        "atSeconds": 9.12,
         "done": 40500,
-        "itemsPerSecond": 5848.8
+        "itemsPerSecond": 3763.5
       },
       {
-        "atSeconds": 7.91,
+        "atSeconds": 9.65,
         "done": 43500,
-        "itemsPerSecond": 5791.5
+        "itemsPerSecond": 5656.6
       },
       {
-        "atSeconds": 8.44,
+        "atSeconds": 10.18,
         "done": 46500,
-        "itemsPerSecond": 5636.3
+        "itemsPerSecond": 5654.1
       },
       {
-        "atSeconds": 8.96,
+        "atSeconds": 10.73,
+        "done": 49000,
+        "itemsPerSecond": 4555
+      },
+      {
+        "atSeconds": 11.26,
         "done": 50000,
-        "itemsPerSecond": 6684.2
+        "itemsPerSecond": 1867.8
       }
     ]
   }

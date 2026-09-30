@@ -1,6 +1,6 @@
 {
   "name": "kill-resume",
-  "generatedAt": "2026-09-30T12:20:33.247Z",
+  "generatedAt": "2026-09-30T17:14:04.946Z",
   "hardware": {
     "platform": "win32",
     "release": "10.0.26200",
@@ -11,19 +11,19 @@
     "nodeVersion": "v22.15.0"
   },
   "job": {
-    "jobId": "f91ebb48-ad81-4bba-aca5-bacdf0b43e39",
+    "jobId": "4aa7daca-df0b-4899-81e7-c64c7bc91559",
     "itemCount": 50000,
-    "sourceStage": "Qualified",
-    "targetStage": "Contract Sent"
+    "sourceStage": "Contract Sent",
+    "targetStage": "Qualified"
   },
   "timeline": {
-    "toKillMs": 3310,
-    "doneAtKill": 16500,
-    "doneAfterRollback": 16500,
+    "toKillMs": 3024,
+    "doneAtKill": 15000,
+    "doneAfterRollback": 15000,
     "rolledBackItems": 0,
-    "pendingAfterKill": 33500,
-    "killToCompletionMs": 5996,
-    "totalWallClockMs": 10339
+    "pendingAfterKill": 35000,
+    "killToCompletionMs": 6469,
+    "totalWallClockMs": 10538
   },
   "correctness": {
     "duplicateApplies": 0,

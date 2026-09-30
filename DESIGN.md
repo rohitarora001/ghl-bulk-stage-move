@@ -94,10 +94,17 @@ nothing asserts on is an index a later migration quietly removes.
 
 Why the benchmark did not catch it: at 50 000 items the extra work is ~100 chunks × an average of a
 few milliseconds, against an apply that updates 500 rows and inserts 500 transitions each time, run
-by three loops in parallel. Measured drain was **50 000 items in 8.96 s (5 578 items/sec)** with a
-last-third/first-third rate ratio of **1.25** — steady, arguably improving. The quadratic term is
-real and simply too small to see at this size. At 10× it is not (§6). Every number in
-`BENCHMARKS.md` was measured *before* the index was added, so they are the pessimistic ones.
+by three loops in parallel. The pre-index drain measured **50 000 items in 8.96 s (5 578
+items/sec)** with a last-third/first-third rate ratio of **1.25** — steady, arguably improving. The
+quadratic term is real and simply too small to see at this size. At 10× it is not (§6).
+
+`BENCHMARKS.md` has since been regenerated against the shipped code with the index in place, and
+the honest reading of that run is mixed: submission latency improved (1 747 ms → 1 219 ms for the
+stage-only filter, the path the new index serves), while drain throughput came out *lower* (6 684
+→ 4 440 items/sec) and the interactive p95 rose. The drain numbers are not comparable across those
+two runs — the idle interactive baseline, which executes no worker code at all, also tripled
+(11.79 ms → 39.71 ms p95), which points at the machine the second run happened on rather than at
+the claim path. Both runs are reported as measured; neither is tuned.
 
 The snapshot's own index is a different one and does work as designed:
 `idx_opportunities_filter (workspace_id, stage_id, owner_id, status, created_at, value)` and
