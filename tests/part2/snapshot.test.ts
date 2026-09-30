@@ -1,6 +1,6 @@
 import request from 'supertest';
+import { container } from '@app/container';
 import { createApp } from '../../src/api/server';
-import { moveOpportunity } from '../../src/api/services/opportunityService';
 import { claimAndApplyChunk } from '../../src/worker/claimAndApplyChunk';
 import {
   adminPrisma,
@@ -124,7 +124,7 @@ describe('snapshot, not live set', () => {
     // A human moved it somewhere else. That bumps version, so the frozen expected_version no
     // longer matches and the manual edit wins — selection being final does not mean the job
     // overwrites people.
-    await moveOpportunity({
+    await container.opportunitiesService.moveOpportunity({
       workspaceId: fixture.workspaceId,
       opportunityId: leaver.id,
       targetStageId: fixture.stageIds[2]!,

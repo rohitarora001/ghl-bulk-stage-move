@@ -1,6 +1,6 @@
 import request from 'supertest';
+import { container } from '@app/container';
 import { createApp } from '../../src/api/server';
-import { moveOpportunity } from '../../src/api/services/opportunityService';
 import { claimAndApplyChunk } from '../../src/worker/claimAndApplyChunk';
 import { enrollFreshOpportunities } from '../setup/jobFixtures';
 import {
@@ -83,7 +83,7 @@ describe('POST /jobs/:id/retry-failed', () => {
 
     // A human moved one of the failed rows somewhere else entirely while the job was stalled.
     const elsewhere = fixture.stageIds[2]!;
-    await moveOpportunity({
+    await container.opportunitiesService.moveOpportunity({
       workspaceId: fixture.workspaceId,
       opportunityId: job.opportunityIds[0]!,
       targetStageId: elsewhere,

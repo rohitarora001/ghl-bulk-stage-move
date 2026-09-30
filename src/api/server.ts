@@ -1,8 +1,9 @@
 import express, { type Express } from 'express';
+import { container } from '@app/container';
+import { opportunitiesRoutes } from '@modules/opportunities/opportunities.routes';
 import { errorHandler, notFound, requestId } from '@shared/middleware';
 import { workspaceScope } from './middleware/workspaceScope';
 import { jobsRouter } from './routes/jobs';
-import { opportunitiesRouter } from './routes/opportunities';
 
 /** Bodies past this are rejected by the parser and answered 413 by the error handler. */
 const MAX_BODY_SIZE = '1mb';
@@ -26,7 +27,7 @@ export function createApp(): Express {
 
   app.use(workspaceScope());
   app.use(jobsRouter());
-  app.use(opportunitiesRouter());
+  app.use(opportunitiesRoutes(container.opportunitiesController));
 
   app.use(notFound());
   app.use(errorHandler());

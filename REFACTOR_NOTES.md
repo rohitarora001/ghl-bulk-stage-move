@@ -358,6 +358,45 @@ Landed, suite 103/103 green, `build`, `typecheck` and `lint` all clean:
 `createApp()` already uses the new `requestId`/`notFound`/`errorHandler`; response bytes are
 unchanged, which the untouched supertest suites prove.
 
+## Phase 2 — `opportunities`, the reference module (complete)
+
+Suite 114/114 (103 existing, unchanged in intent, plus 11 new service unit tests), `build`,
+`typecheck` and `lint` clean.
+
+`src/api/services/opportunityService.ts`, `src/api/services/stageListService.ts` and
+`src/api/routes/opportunities.ts` became `src/modules/opportunities/`:
+
+| File | Holds |
+|---|---|
+| `opportunities.routes.ts` | three paths, their validation middleware, controller binding |
+| `opportunities.controller.ts` | validated input → service call → status + JSON |
+| `opportunities.service.ts` | the rules, and the transaction boundary |
+| `opportunities.repository.ts` | every Prisma call and the raw SQL, plus row mapping |
+| `opportunities.schemas.ts` / `.types.ts` / `.errors.ts` / `.constants.ts` | request shapes, domain types, six named domain errors, page-size and status constants |
+
+- **The eight `safeParse` blocks are gone from this module**: routes declare
+  `validate(schema, source, { code, message, withDetails })`, and the id schemas keep answering
+  without `details` exactly as before.
+- **Six domain errors replace inline code+message pairs** (`InvalidStageError`,
+  `OpportunityNotFoundError`, `InvalidTargetStageError`, `VersionConflictError`,
+  `StageNotFoundError`, `InvalidCursorError`) — every string preserved to the character, including
+  the curly apostrophe in the target-stage message.
+- **`src/app/container.ts`** wires repository → service → controller. One instance per process, as
+  before, but assembled in one visible place.
+- **The cursor codec moved to `shared/http/pagination.ts`** as `encodeCursor`/`decodeCursor` with a
+  caller-supplied type guard, so the "what is a valid cursor" rule stays in the module.
+
+Two things worth recording:
+
+1. **The layer lint caught a real violation in my own code.** `opportunities.service.ts` imported
+   `type { Opportunity }` from `@prisma/client`. The fix is the architecture's own answer: the
+   module re-exports the row as `OpportunityRecord` from `opportunities.types.ts`, so nothing above
+   the repository names Prisma. It is deliberately the generated type, not a hand-written copy — a
+   parallel interface that drifted by a field would silently change the response body.
+2. **Three tests moved from importing a function to importing the container**
+   (`collision`, `retryFailed`, `snapshot` called `moveOpportunity` directly). Same assertions,
+   same behavior under test; only the call site moved.
+
 ## 11. Follow-ups (out of scope here)
 
 Authentication and authorization; rate limiting; `helmet`/CORS; job cancellation; retention policy

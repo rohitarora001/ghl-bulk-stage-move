@@ -1,5 +1,5 @@
+import { container } from '@app/container';
 import { ConflictError } from '@shared/errors';
-import { moveOpportunity } from '../../src/api/services/opportunityService';
 import { claimAndApplyChunk } from '../../src/worker/claimAndApplyChunk';
 import { enrollFreshOpportunities } from '../setup/jobFixtures';
 import {
@@ -40,7 +40,7 @@ describe('a manual move racing a running job', () => {
     const manualTarget = fixture.stageIds[2]!;
 
     // The human gets there first, between the snapshot and the chunk.
-    const moved = await moveOpportunity({
+    const moved = await container.opportunitiesService.moveOpportunity({
       workspaceId: fixture.workspaceId,
       opportunityId: collided!,
       targetStageId: manualTarget,
@@ -83,7 +83,7 @@ describe('a manual move racing a running job', () => {
     const job = await enrollFreshOpportunities(fixture, 1);
     const collided = job.opportunityIds[0]!;
 
-    await moveOpportunity({
+    await container.opportunitiesService.moveOpportunity({
       workspaceId: fixture.workspaceId,
       opportunityId: collided,
       targetStageId: job.targetStageId,
@@ -101,14 +101,14 @@ describe('a manual move racing a running job', () => {
   it('rejects a manual move whose expectedVersion is stale', async () => {
     const job = await enrollFreshOpportunities(fixture, 1);
     const target = job.opportunityIds[0]!;
-    await moveOpportunity({
+    await container.opportunitiesService.moveOpportunity({
       workspaceId: fixture.workspaceId,
       opportunityId: target,
       targetStageId: fixture.stageIds[2]!,
     });
 
     // A second client holding the version it read before the first move.
-    const stale = moveOpportunity({
+    const stale = container.opportunitiesService.moveOpportunity({
       workspaceId: fixture.workspaceId,
       opportunityId: target,
       targetStageId: fixture.stageIds[1]!,
@@ -126,7 +126,7 @@ describe('a manual move racing a running job', () => {
     const other = await createWorkspace('workspace-b');
     const job = await enrollFreshOpportunities(fixture, 1);
 
-    const crossTenant = moveOpportunity({
+    const crossTenant = container.opportunitiesService.moveOpportunity({
       workspaceId: fixture.workspaceId,
       opportunityId: job.opportunityIds[0]!,
       targetStageId: other.stageIds[0]!,
