@@ -12,6 +12,49 @@ import { ApiError } from '../errors';
  * now is a fresher signal than a filter snapshot that may be minutes old.
  */
 
+export interface CreateOpportunityInput {
+  workspaceId: string;
+  pipelineId: string;
+  stageId: string;
+  name: string;
+  value: number;
+  ownerId: string;
+  status?: 'open' | 'won' | 'lost' | 'abandoned';
+}
+
+/**
+ * Creates at version 1.
+ *
+ * The stage is validated against BOTH the workspace and the named pipeline before the insert. A
+ * row whose `pipeline_id` and `stage_id` point at different pipelines is not a bad request that
+ * failed — it is a row that every later listing disagrees about, and the foreign keys alone do not
+ * forbid it because each one is individually satisfied.
+ */
+export async function createOpportunity(input: CreateOpportunityInput): Promise<Opportunity> {
+  const stage = await interactivePrisma.stage.findFirst({
+    where: { id: input.stageId, workspaceId: input.workspaceId, pipelineId: input.pipelineId },
+    select: { id: true },
+  });
+  if (!stage) {
+    throw ApiError.badRequest(
+      'invalid_stage',
+      'stageId must name a stage in this workspace and in the named pipeline',
+    );
+  }
+
+  return interactivePrisma.opportunity.create({
+    data: {
+      workspaceId: input.workspaceId,
+      pipelineId: input.pipelineId,
+      stageId: input.stageId,
+      name: input.name,
+      value: input.value,
+      ownerId: input.ownerId,
+      ...(input.status ? { status: input.status } : {}),
+    },
+  });
+}
+
 export interface MoveOpportunityInput {
   workspaceId: string;
   opportunityId: string;

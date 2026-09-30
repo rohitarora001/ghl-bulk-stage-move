@@ -3,6 +3,7 @@ import { logger } from '../shared/logger';
 import { ApiError } from './errors';
 import { workspaceScope } from './middleware/workspaceScope';
 import { jobsRouter } from './routes/jobs';
+import { opportunitiesRouter } from './routes/opportunities';
 
 /**
  * Builds the app without binding a port, so tests drive it in-process through supertest and the
@@ -18,6 +19,7 @@ export function createApp(): Express {
 
   app.use(workspaceScope());
   app.use(jobsRouter());
+  app.use(opportunitiesRouter());
 
   app.use((_req, res) => {
     res.status(404).json({ error: { code: 'not_found', message: 'no such route' } });
