@@ -142,3 +142,23 @@ fingerprints still match**; the helper just no longer knows what a filter is.
 
 15 service unit tests in `__tests__/` cover the replay/409 rules, the key race (loser gets the
 winner's job), the pre-fingerprint null case, and all five classifications — no database.
+
+## Date filter defect found and fixed (commit e7264ed)
+
+`bulkMoveFilterSchema`'s date refine compared the two ISO strings character by character, so
+`2025-06-15T23:00:00+05:30` (17:30Z, earlier) read as *later* than `2025-06-15T18:00:00Z`. A valid
+window was rejected 400; an inverted one was accepted 202 and silently matched nothing. Now
+compares `Date.parse` values.
+
+**Why it survived:** of the five filter categories the brief names — stage, owner, status, value
+range, date range — only stage and status had test coverage, because every other test reached for
+those two to have something to submit with. Owner, value and date were schema-validated and
+translated to SQL with nothing asserting the rows they selected.
+
+`tests/part2/filterFields.test.ts` covers all five, asserting the **exact set of enrolled
+opportunity ids** rather than a count — a count passes for a predicate that picks the wrong rows in
+the right quantity. 8 tests; suite is now 137.
+
+Gotcha for future filter work: a same-offset pair like `10:00+05:30` → `20:00+05:30` does *not*
+expose this class of bug, because string order coincides with instant order. The bounds must use
+**different** offsets.

@@ -119,3 +119,9 @@ Note: the brief requires **four** deliverables (repo, README, DESIGN, BENCHMARKS
 added because the reviewer is told they will try to reproduce the numbers. **The brief asks for no
 video** — the only live element is a review call where they pick code and ask why.
 
+## VERIFICATION.md section 4 (commit e7264ed)
+
+Records the by-hand filter pass: six rows differing in exactly one dimension each, every filter
+selecting the expected rows by name, the five-way conjunction rejecting one row per dimension, and
+eight adversarial inputs — two of which answered the opposite way before the date fix in
+[[module-api-submission]].
