@@ -10,6 +10,9 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
+    // Required by ts-jest once `module` is node16: a hybrid module kind is only supported when
+    // each file can be transpiled on its own. It also matches how ts-jest compiles anyway.
+    "isolatedModules": true,
     "declaration": false,
     "sourceMap": true,
     "outDir": "dist",
