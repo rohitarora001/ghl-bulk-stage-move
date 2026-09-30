@@ -6,6 +6,9 @@ when a human edits a record the job is also touching, and isolated per tenant.
 
 - **[DESIGN.md](DESIGN.md)** — how it works, what was measured, and where it is weak.
 - **[BENCHMARKS.md](BENCHMARKS.md)** — generated from real runs, not written by hand.
+- **[VERIFICATION.md](VERIFICATION.md)** — what was executed end to end against a running
+  system: the clean-machine `docker compose up`, and both seeded datasets driven through the
+  real API and worker.
 
 Node.js 22 · TypeScript 5.9 · Express 5 · Prisma 6 · PostgreSQL 16. **Express, not NestJS** — a
 documented deviation, see [DESIGN.md](DESIGN.md#stack-express-not-nestjs).

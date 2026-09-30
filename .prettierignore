@@ -12,3 +12,4 @@ bench-results/
 
 # The memory graph is prose, hand-wrapped like the other documents.
 .claude/
+VERIFICATION.md
