@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import './env';
 
 /**
@@ -104,4 +104,30 @@ export async function createOpportunity(
 
 export async function disconnectTestDb(): Promise<void> {
   await adminPrisma.$disconnect();
+}
+
+/**
+ * A job row. `transitions.job_id` is a real foreign key, so any test that writes a
+ * job-attributed transition needs a job that actually exists.
+ */
+export async function createJob(
+  fixture: WorkspaceFixture,
+  overrides: Partial<{
+    idempotencyKey: string;
+    targetStageId: string;
+    totalCount: number;
+    filter: Prisma.InputJsonValue;
+  }> = {},
+): Promise<{ id: string }> {
+  seq += 1;
+  const row = await adminPrisma.job.create({
+    data: {
+      workspaceId: fixture.workspaceId,
+      idempotencyKey: overrides.idempotencyKey ?? `idem-${seq}`,
+      filter: overrides.filter ?? {},
+      targetStageId: overrides.targetStageId ?? fixture.stageIds[1]!,
+      totalCount: overrides.totalCount ?? 0,
+    },
+  });
+  return { id: row.id };
 }

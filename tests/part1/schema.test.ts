@@ -1,5 +1,6 @@
 import {
   adminPrisma,
+  createJob,
   createOpportunity,
   createWorkspace,
   disconnectTestDb,
@@ -39,7 +40,7 @@ describe('base schema', () => {
 
   it('refuses a second job-attributed transition for the same opportunity', async () => {
     const opportunity = await createOpportunity(fixture);
-    const jobId = '11111111-1111-4111-8111-111111111111';
+    const { id: jobId } = await createJob(fixture);
 
     await insertTransition(fixture, opportunity.id, jobId);
 
@@ -69,8 +70,11 @@ describe('base schema', () => {
   it('scopes the job-attributed constraint to one job at a time', async () => {
     const opportunity = await createOpportunity(fixture);
 
-    await insertTransition(fixture, opportunity.id, '11111111-1111-4111-8111-111111111111');
-    await insertTransition(fixture, opportunity.id, '22222222-2222-4222-8222-222222222222');
+    const first = await createJob(fixture);
+    const second = await createJob(fixture);
+
+    await insertTransition(fixture, opportunity.id, first.id);
+    await insertTransition(fixture, opportunity.id, second.id);
 
     const count = await adminPrisma.transition.count({
       where: { opportunityId: opportunity.id, NOT: { jobId: null } },

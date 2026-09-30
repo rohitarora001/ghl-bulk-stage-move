@@ -22,6 +22,7 @@ model Workspace {
   stages        Stage[]
   opportunities Opportunity[]
   transitions   Transition[]
+  jobs          Job[]
 
   @@map("workspaces")
 }
@@ -48,9 +49,10 @@ model Stage {
   position    Int
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  pipeline      Pipeline      @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
-  opportunities Opportunity[]
+  workspace      Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  pipeline       Pipeline      @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  opportunities  Opportunity[]
+  targetedByJobs Job[]
 
   @@unique([pipelineId, position])
   @@index([workspaceId, pipelineId])
@@ -100,17 +102,104 @@ model Transition {
   workspaceId   String   @map("workspace_id") @db.Uuid
   fromStageId   String?  @map("from_stage_id") @db.Uuid
   toStageId     String   @map("to_stage_id") @db.Uuid
-  /// Null for a manual move. Deliberately NOT a foreign key at this migration — the `jobs`
-  /// table does not exist yet; the constraint is added alongside `jobs` in a later migration.
+  /// Null for a manual move, set for a job-attributed one.
   jobId         String?  @map("job_id") @db.Uuid
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
   workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// Cascade rather than SetNull: a job-attributed transition that lost its job would read as a
+  /// manual move, which is a false audit record. Jobs are only ever deleted with their
+  /// workspace, and the transition goes with it.
+  job         Job?        @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   /// Needed by the kill-resume double-apply proof; without it that query seq-scans a table that
   /// grows with every job and every manual move ever made.
   @@index([jobId])
   @@index([opportunityId, createdAt])
   @@map("transitions")
+}
+
+enum JobStatus {
+  running
+  completed
+  failed
+
+  @@map("job_status")
+}
+
+enum JobItemStatus {
+  pending
+  done
+  skipped_conflict
+  failed
+
+  @@map("job_item_status")
+}
+
+/// One bulk stage-move submission. The row is the client's handle on the work: it is created
+/// inside the same transaction as its `job_items`, so a job that exists always has its full
+/// guest list, and progress is always computable from committed state alone.
+model Job {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId    String    @map("workspace_id") @db.Uuid
+  /// Client-supplied. Scoped per workspace, not globally, so one tenant's key choice cannot
+  /// collide with another's.
+  idempotencyKey String    @map("idempotency_key")
+  /// The filter as submitted, kept verbatim for the status response and for debugging. It is
+  /// NOT re-evaluated: the snapshot in `job_items` is the authoritative guest list.
+  filter         Json      @db.JsonB
+  targetStageId  String    @map("target_stage_id") @db.Uuid
+  status         JobStatus @default(running)
+  /// Rows actually enrolled — the denominator of every progress percentage.
+  totalCount     Int       @map("total_count")
+  /// Rows the filter matched before truncation, when it matched more than the cap. Null when
+  /// nothing was truncated.
+  matchedCount   Int?      @map("matched_count")
+  truncated      Boolean   @default(false)
+  /// Touched by every worker chunk that commits. The picker orders by this so a job nobody has
+  /// advanced recently goes first, and the finalize sweep uses it as its time gate.
+  lastProgressAt DateTime? @map("last_progress_at") @db.Timestamptz(6)
+  errorMessage   String?   @map("error_message")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// Restrict, not Cascade: deleting the stage a running job is moving toward would silently
+  /// destroy the job and its audit trail. The delete is refused instead.
+  targetStage Stage     @relation(fields: [targetStageId], references: [id], onDelete: Restrict)
+
+  items       JobItem[]
+  transitions Transition[]
+
+  @@unique([workspaceId, idempotencyKey], map: "jobs_workspace_idempotency_uq")
+  @@index([workspaceId, createdAt])
+  @@map("jobs")
+}
+
+/// One enrolled opportunity. `status` IS the cursor — there is no separately persisted offset to
+/// drift out of step with the work, so a worker that dies mid-chunk resumes by simply asking for
+/// pending rows again.
+model JobItem {
+  id              BigInt        @id @default(autoincrement())
+  jobId           String        @map("job_id") @db.Uuid
+  opportunityId   String        @map("opportunity_id") @db.Uuid
+  /// `opportunities.version` as seen at snapshot time. A mismatch at apply time means a human
+  /// edited the row first, and the job stands down with `skipped_conflict`.
+  expectedVersion Int           @map("expected_version")
+  status          JobItemStatus @default(pending)
+  attempts        Int           @default(0)
+  /// Exponential backoff for a chunk that keeps failing, so one poison row cannot spin the
+  /// worker at full speed.
+  nextAttemptAt   DateTime      @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
+  lastError       String?       @map("last_error")
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  /// The infra-facing half of idempotency: a retried snapshot insert cannot enroll the same
+  /// opportunity twice, so it cannot be moved twice or double-counted in progress.
+  @@unique([jobId, opportunityId], map: "job_items_job_opportunity_uq")
+  /// Serves the progress query's GROUP BY and the finalize sweep's "any pending left?" check.
+  @@index([jobId, status])
+  @@map("job_items")
 }
