@@ -37,10 +37,7 @@ export interface BaseFixture {
 }
 
 /** One pipeline of `stageCount` stages inside a fresh workspace. */
-export async function createWorkspace(
-  name: string,
-  stageCount = 3,
-): Promise<WorkspaceFixture> {
+export async function createWorkspace(name: string, stageCount = 3): Promise<WorkspaceFixture> {
   const workspace = await adminPrisma.workspace.create({ data: { name } });
   const pipeline = await adminPrisma.pipeline.create({
     data: { workspaceId: workspace.id, name: `${name} pipeline` },

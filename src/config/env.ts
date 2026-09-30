@@ -28,8 +28,7 @@ export interface Config {
   stuckAfterMs: number;
 }
 
-const positiveInt = (fallback: number) =>
-  z.coerce.number().int().positive().default(fallback);
+const positiveInt = (fallback: number) => z.coerce.number().int().positive().default(fallback);
 
 const schema = z.object({
   DATABASE_URL_ADMIN: z.string().min(1),

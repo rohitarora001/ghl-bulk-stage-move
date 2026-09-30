@@ -167,7 +167,12 @@ export async function seedWorkspace(
 export const SMALL_DEMO = { primary: 5_000, secondary: 2_000, secondaryCount: 2 };
 
 /** The benchmark dataset: one large workspace plus five small neighbours to prove isolation. */
-export const LARGE_DEMO = { primary: 500_000, secondaryMin: 2_000, secondaryMax: 5_000, secondaryCount: 5 };
+export const LARGE_DEMO = {
+  primary: 500_000,
+  secondaryMin: 2_000,
+  secondaryMax: 5_000,
+  secondaryCount: 5,
+};
 
 export async function seedAll(prisma: PrismaClient, large: boolean): Promise<void> {
   const started = Date.now();

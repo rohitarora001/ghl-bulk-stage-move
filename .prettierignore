@@ -1,0 +1,14 @@
+# The prose documents are hand-wrapped and hand-tabled. Prettier reflows both, which turns a
+# one-line correction into a whole-file diff and breaks the alignment of the measurement tables.
+README.md
+DESIGN.md
+REFACTOR_NOTES.md
+
+# Generated from bench-results/*.json by `npm run bench:report`.
+BENCHMARKS.md
+
+dist/
+bench-results/
+
+# The memory graph is prose, hand-wrapped like the other documents.
+.claude/

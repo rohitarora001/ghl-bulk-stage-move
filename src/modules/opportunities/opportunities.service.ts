@@ -31,9 +31,7 @@ function isStageListCursor(value: unknown): value is StageListCursor {
 export interface OpportunitiesService {
   createOpportunity(input: CreateOpportunityInput): Promise<OpportunityRecord>;
   moveOpportunity(input: MoveOpportunityInput): Promise<OpportunityRecord>;
-  listStageOpportunities(
-    input: ListStageOpportunitiesInput,
-  ): Promise<ListStageOpportunitiesResult>;
+  listStageOpportunities(input: ListStageOpportunitiesInput): Promise<ListStageOpportunitiesResult>;
 }
 
 /**

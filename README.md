@@ -74,6 +74,17 @@ npm test
 repositories. The Postgres ones truncate every table between cases, so point them at `ghl_test` — never
 at a database holding a dataset you want to keep.
 
+### Checks
+
+```bash
+npm run typecheck   # tsc --noEmit
+npm run lint        # ESLint, including the layer-boundary rules
+npm run format      # Prettier
+npm run build       # tsc + tsc-alias (rewrites path aliases in dist/)
+```
+
+`tsc` does not clean `dist/`, so remove it before a release build if the layout has changed.
+
 ### Benchmarks
 
 ```bash
@@ -82,6 +93,10 @@ DATABASE_URL_ADMIN=postgresql://postgres:postgres@localhost:55433/ghl_dev npm ru
 DATABASE_URL_ADMIN=postgresql://postgres:postgres@localhost:55433/ghl_dev npm run seed -- --large
 npm run bench:all
 ```
+
+The benchmarks run against their own database, so **re-run `npm run migrate` against `ghl_dev`
+whenever a migration lands** — otherwise submission fails with a 500 on the first missing column,
+which is exactly what happened when this was forgotten once.
 
 `--large` seeds 500 000 opportunities across 12 stages plus five small neighbour workspaces (~41 s).
 `bench:all` runs the three benchmarks — each starting the real `api` and `worker` entrypoints as

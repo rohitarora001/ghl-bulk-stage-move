@@ -1,7 +1,7 @@
 # Bulk Stage Move — Execution Plan (task-structured)
 
 **Spec / design authority:** `C:\Users\rohit\.claude\plans\lets-start-planning-about-compiled-lobster.md`
-(referred to below as *the design doc*). Where this file and the design doc disagree, the
+(referred to below as _the design doc_). Where this file and the design doc disagree, the
 design doc wins and the divergence gets a ledger `Ruling:` line.
 
 This file exists because the design doc is prose — it has no `## Task N` headings, so the
@@ -29,19 +29,19 @@ in executable form; rationale stays in the design doc.
 
 ## Environment Variables (single source of truth, `src/shared/config.ts`)
 
-| Name | Default | Used by |
-|---|---|---|
-| `DATABASE_URL_ADMIN` | — | migrations, seed, tests' setup |
-| `DATABASE_URL_INTERACTIVE` | — | `interactivePrisma` |
-| `DATABASE_URL_WORKER` | — | `jobPrisma` |
-| `PORT` | `3000` | api |
-| `CHUNK_SIZE` | `500` | worker |
-| `BULK_MAX_ITEMS` | `50000` | submission cap (lowered by truncation tests) |
-| `WORKER_POOL_SIZE` | `3` | worker loop count, must equal worker `connection_limit` |
-| `MAX_ATTEMPTS` | `5` | poison-chunk terminal threshold |
-| `SWEEP_INTERVAL_MS` | `2000` | finalize sweep time gate |
-| `IDLE_BACKOFF_MS` | `250` | worker idle sleep |
-| `CLAIM_BACKOFF_MS` | `500` | worker tier-1 sleep |
+| Name                       | Default | Used by                                                 |
+| -------------------------- | ------- | ------------------------------------------------------- |
+| `DATABASE_URL_ADMIN`       | —       | migrations, seed, tests' setup                          |
+| `DATABASE_URL_INTERACTIVE` | —       | `interactivePrisma`                                     |
+| `DATABASE_URL_WORKER`      | —       | `jobPrisma`                                             |
+| `PORT`                     | `3000`  | api                                                     |
+| `CHUNK_SIZE`               | `500`   | worker                                                  |
+| `BULK_MAX_ITEMS`           | `50000` | submission cap (lowered by truncation tests)            |
+| `WORKER_POOL_SIZE`         | `3`     | worker loop count, must equal worker `connection_limit` |
+| `MAX_ATTEMPTS`             | `5`     | poison-chunk terminal threshold                         |
+| `SWEEP_INTERVAL_MS`        | `2000`  | finalize sweep time gate                                |
+| `IDLE_BACKOFF_MS`          | `250`   | worker idle sleep                                       |
+| `CLAIM_BACKOFF_MS`         | `500`   | worker tier-1 sleep                                     |
 
 ---
 
@@ -51,6 +51,7 @@ in executable form; rationale stays in the design doc.
 Postgres, with `config.ts` parsing and validating every env var in the table above.
 
 **Interfaces — Produces:**
+
 - `src/shared/config.ts` → `export const config: Config`, `export function loadConfig(env: NodeJS.ProcessEnv): Config`
   with fields `databaseUrlAdmin`, `databaseUrlInteractive`, `databaseUrlWorker`, `port`,
   `chunkSize`, `bulkMaxItems`, `workerPoolSize`, `maxAttempts`, `sweepIntervalMs`,
@@ -59,6 +60,7 @@ Postgres, with `config.ts` parsing and validating every env var in the table abo
 - npm scripts: `build`, `test`, `lint`, `typecheck`.
 
 **Steps:**
+
 1. `npm init -y`; install deps: `express`, `@prisma/client`, `zod`; dev deps: `typescript`,
    `@types/node`, `@types/express`, `ts-node`, `ts-node-dev`, `prisma`, `jest`, `ts-jest`,
    `@types/jest`, `supertest`, `@types/supertest`, `concurrently`, `cross-env`.
@@ -96,21 +98,23 @@ names, including the partial unique index on `transitions` that Prisma cannot ex
 `seedBaseFixture()`.
 
 **Schema (snake_case via `@map`/`@@map` so raw SQL reads naturally):**
+
 - `workspaces(id uuid pk, name text, created_at)`
 - `pipelines(id uuid pk, workspace_id fk, name text, created_at)`; index `(workspace_id)`
 - `stages(id uuid pk, workspace_id fk, pipeline_id fk, name text, position int, created_at)`;
   unique `(pipeline_id, position)`; index `(workspace_id, pipeline_id)`
 - `opportunities(id uuid pk, workspace_id fk, pipeline_id fk, stage_id fk, name text,
-  value numeric(14,2), status opportunity_status, owner_id uuid, version int default 1,
-  created_at, updated_at)`
+value numeric(14,2), status opportunity_status, owner_id uuid, version int default 1,
+created_at, updated_at)`
   - index `idx_opportunities_filter (workspace_id, stage_id, owner_id, status, created_at, value)`
   - index `idx_opportunities_stage_list (workspace_id, stage_id, created_at, id)`
 - `transitions(id uuid pk, opportunity_id fk, workspace_id fk, from_stage_id uuid null,
-  to_stage_id uuid, job_id uuid null, created_at)`
+to_stage_id uuid, job_id uuid null, created_at)`
   - index `(job_id)`
   - **hand-added** `CREATE UNIQUE INDEX transitions_job_opportunity_uq ON transitions (job_id, opportunity_id) WHERE job_id IS NOT NULL;`
 
 **Steps:**
+
 1. Write `prisma/schema.prisma` for the models above. Generate the migration against the test
    DB: `DATABASE_URL=<test url> npx prisma migrate dev --name base_schema --create-only`.
    Expected: a `prisma/migrations/<ts>_base_schema/migration.sql` is written.
@@ -143,6 +147,7 @@ and exactly the privileges they need; `prismaClients.ts` exposes the two capped 
 custom migrate runner creates roles before migrating and grants after.
 
 **Interfaces — Produces:**
+
 - `prisma/sql/000_roles.sql` — idempotent (`DO $$ ... IF NOT EXISTS ... $$`) role creation +
   `ALTER ROLE app_interactive SET statement_timeout = '10s'`, `app_worker` `'30s'`.
 - `prisma/sql/999_grants.sql` — `GRANT USAGE ON SCHEMA public` + `SELECT, INSERT, UPDATE` on
@@ -152,6 +157,7 @@ custom migrate runner creates roles before migrating and grants after.
 - `src/db/prismaClients.ts` → `interactivePrisma`, `jobPrisma`, `disconnectAll()`.
 
 **Steps:**
+
 1. RED: `tests/db/roles.test.ts` — (a) `SELECT rolconfig FROM pg_roles WHERE rolname='app_worker'`
    contains `statement_timeout=30s`, and `app_interactive` contains `statement_timeout=10s`;
    (b) connecting as `app_worker` and running `SELECT pg_sleep(35)` fails with SQLSTATE `57014`
@@ -179,6 +185,7 @@ thousand opportunities, fast enough to run inside `docker compose up`.
 Task 13's large seed.
 
 **Steps:**
+
 1. RED: `tests/db/seed.test.ts` — run `seedWorkspace` with `opportunityCount: 2000`; assert
    exactly 2000 opportunities exist for that workspace, all 12 stages are present, every
    opportunity's `stage_id` belongs to that workspace's pipeline, `created_at` values span
@@ -203,19 +210,20 @@ Task 13's large seed.
 (`running|completed|failed`), `job_item_status` (`pending|done|skipped_conflict|failed`).
 
 - `jobs(id uuid pk, workspace_id fk, idempotency_key text, filter jsonb, target_stage_id uuid,
-  status job_status default 'running', total_count int, matched_count int null,
-  truncated bool default false, last_progress_at timestamptz null, error_message text null,
-  created_at)`
+status job_status default 'running', total_count int, matched_count int null,
+truncated bool default false, last_progress_at timestamptz null, error_message text null,
+created_at)`
   - unique `(workspace_id, idempotency_key)`
   - **hand-added** `CREATE INDEX jobs_running_progress_idx ON jobs (last_progress_at) WHERE status = 'running';`
 - `job_items(id bigserial pk, job_id fk, opportunity_id uuid, expected_version int,
-  status job_item_status default 'pending', attempts int default 0,
-  next_attempt_at timestamptz default now(), last_error text null, created_at)`
+status job_item_status default 'pending', attempts int default 0,
+next_attempt_at timestamptz default now(), last_error text null, created_at)`
   - unique `(job_id, opportunity_id)`
   - index `(job_id, status)`
   - **hand-added** `CREATE INDEX job_items_claimable_idx ON job_items (job_id, next_attempt_at, id) WHERE status = 'pending';`
 
 **Steps:**
+
 1. RED: `tests/db/jobsSchema.test.ts` — (a) duplicate `(workspace_id, idempotency_key)` rejects
    with `23505`; same key in a different workspace inserts fine; (b) duplicate
    `(job_id, opportunity_id)` rejects with `23505`; (c) all three hand-added indexes appear in
@@ -237,6 +245,7 @@ snapshot the match set with one server-side CTE, report truncation, survive a co
 duplicate submission.
 
 **Interfaces — Produces:**
+
 - `src/api/server.ts` → `export function createApp(): express.Express` (no `listen`, so
   supertest can drive it), `src/api/index.ts` doing the `listen`.
 - `src/api/middleware/workspaceScope.ts` → validates `X-Workspace-Id` against `workspaces`,
@@ -250,6 +259,7 @@ duplicate submission.
 `config.bulkMaxItems`.
 
 **The snapshot statement (raw, one round trip, no ids cross the wire):**
+
 ```sql
 WITH picked AS (
   SELECT id, version, created_at
@@ -265,19 +275,21 @@ ins AS (
 )
 SELECT (SELECT count(*) FROM ins) AS inserted, (SELECT count(*) FROM picked) AS probed;
 ```
+
 No window function — see the design doc's "Correction from an earlier draft".
 
 **Steps:**
+
 1. RED: `tests/part2/submission.test.ts` — (a) missing/unknown `X-Workspace-Id` → 400;
    (b) valid submission returns 202 with `totalCount` equal to the number of matching
    opportunities, `truncated: false`, `matchedCount === totalCount`, and exactly that many
    `job_items` rows all `pending` with `expected_version` matching each opportunity's current
    `version`; (c) a `targetStageId` from another workspace → 400 and zero `jobs`/`job_items`
-   rows created; (d) a `targetStageId` in a different pipeline of the *same* workspace → 400.
+   rows created; (d) a `targetStageId` in a different pipeline of the _same_ workspace → 400.
    Run. Expected: FAIL — module `src/api/server` not found.
 2. GREEN: implement `createApp`, `workspaceScope`, the route and `submitBulkMoveJob`,
    including the two stage-validation clauses (`workspace_id = $ws AND pipeline_id = <the
-   filter's/opportunity's pipeline>`; for bulk, the filter's matched set must all belong to the
+filter's/opportunity's pipeline>`; for bulk, the filter's matched set must all belong to the
    target stage's pipeline — enforce by adding `pipeline_id = <target stage's pipeline>` to
    the snapshot predicate, which also makes the cross-pipeline rule true for bulk by
    construction). Re-run. Expected: PASS, 4/4.
@@ -292,7 +304,7 @@ No window function — see the design doc's "Correction from an earlier draft".
    Re-run. Expected: PASS.
 7. RED: `tests/part2/truncation.test.ts` — with `BULK_MAX_ITEMS` lowered to e.g. 10: truncated
    case asserts `truncated === true`, `matchedCount === null`, `totalCount === 10`,
-   `job_items` count `=== 10`, and that the retained rows are the 10 *oldest* by
+   `job_items` count `=== 10`, and that the retained rows are the 10 _oldest_ by
    `(created_at, id)`; non-truncated case asserts `truncated === false` and
    `matchedCount === totalCount`. Run. Expected: FAIL.
 8. GREEN: implement the probe/cap semantics. Re-run. Expected: PASS, both variants.
@@ -313,6 +325,7 @@ returns jobs with claimable work; finalization is a decoupled, time-gated, set-b
 sweep.
 
 **Interfaces — Produces:**
+
 - `src/worker/claimAndApplyChunk.ts` → `claimAndApplyChunk(prisma, jobId): Promise<ChunkResult>`
   where `ChunkResult = { outcome: 'claim-error' } | { outcome: 'applied', claimedCount, doneCount, conflictCount }`
   and on apply failure `{ outcome: 'apply-error', claimedCount }` after `recordChunkFailure` ran.
@@ -326,6 +339,7 @@ sweep.
 **`claimAndApplyChunk` — one interactive transaction, `timeout: 60_000`, `maxWait: 30_000`
 (Prisma's 5s/2s defaults are far too tight for a 500-row multi-statement transaction), every
 statement issued on the transaction handle, never on `jobPrisma`:**
+
 1. `SELECT id, opportunity_id, expected_version FROM job_items WHERE job_id=$1 AND status='pending' AND next_attempt_at <= now() ORDER BY id LIMIT $chunk FOR UPDATE SKIP LOCKED`
    — throw here is **tier 1**: nothing claimed, nothing to penalise.
 2. `SELECT id, stage_id, version FROM opportunities WHERE id = ANY($ids) ORDER BY id FOR UPDATE`
@@ -344,6 +358,7 @@ it. `recordChunkFailure` runs in a fresh transaction after rollback and is guard
 `AND status='pending'` so it cannot penalise rows another loop already resolved.
 
 **Picker:**
+
 ```sql
 SELECT j.id FROM jobs j
 WHERE j.status = 'running'
@@ -353,10 +368,11 @@ ORDER BY j.last_progress_at ASC NULLS FIRST
 LIMIT 1;
 ```
 
-**Finalize sweep** — time-gated every `SWEEP_INTERVAL_MS` on *every* loop iteration regardless
+**Finalize sweep** — time-gated every `SWEEP_INTERVAL_MS` on _every_ loop iteration regardless
 of whether the picker returned a job, set-based across all drained running jobs, status choice
 folded into the same statement (cast literals to `job_status`, since a bare CASE resolves to
 `text`):
+
 ```sql
 UPDATE jobs SET
   status = CASE WHEN EXISTS (SELECT 1 FROM job_items WHERE job_id = jobs.id AND status='failed')
@@ -368,6 +384,7 @@ WHERE status = 'running'
 ```
 
 **Steps:**
+
 1. RED: `tests/part2/chunk.test.ts` — one job, fewer items than a chunk; call
    `claimAndApplyChunk` once; assert every item `done`, each opportunity at the target stage
    with `version` bumped exactly once, exactly one `transitions` row per opportunity with
@@ -387,8 +404,8 @@ WHERE status = 'running'
 6. GREEN: implement `recordChunkFailure` (guarded), the `attempts`/backoff/terminal-`failed`
    logic, and `runFinalizeSweep`. Re-run. Expected: PASS.
 7. RED: `tests/part2/drainedJobFinalizes.test.ts` — resolve every item of job A to `done`
-   *without* calling the picker or a chunk, then call `runFinalizeSweep()` alone; assert A
-   reaches `completed`. Second variant: a *second* job B with thousands of claimable items is
+   _without_ calling the picker or a chunk, then call `runFinalizeSweep()` alone; assert A
+   reaches `completed`. Second variant: a _second_ job B with thousands of claimable items is
    also running, all loops are busy on B; assert A still finalizes within `2 × SWEEP_INTERVAL_MS`
    — this is the test that fails against idle-gated sweeping. Run. Expected: FAIL.
 8. GREEN: time-gate the sweep in `runLoop` rather than idle-gating it. Re-run. Expected: PASS,
@@ -416,6 +433,7 @@ WHERE status = 'running'
 no double-apply and nothing dropped.
 
 **Steps:**
+
 1. RED: `tests/part2/resume.test.ts` — seed a job spanning ≥3 chunks; call
    `claimAndApplyChunk` twice (simulating a kill mid-job); assert a mixed `done`/`pending`
    state with `jobs.status` still `running`; drain the rest; assert **every** item `done`,
@@ -434,9 +452,10 @@ no double-apply and nothing dropped.
 ## Task 9: Collision policy — manual edit wins
 
 **Steps:**
+
 1. RED: `tests/part2/collision.test.ts` — snapshot a job; before the chunk runs, perform a
    manual move on one of its opportunities (bumping `version`); run the chunk; assert the final
-   `stage_id` is the *manual* move's target, `version` reflects only the manual bump, the
+   `stage_id` is the _manual_ move's target, `version` reflects only the manual bump, the
    `job_items` row is `skipped_conflict`, and **no** transition row with this `job_id` exists
    for that opportunity. Run. Expected: FAIL until the manual-move path exists.
 2. GREEN: this needs `opportunityService.moveOpportunity` (Task 14's single move) earlier than
@@ -456,6 +475,7 @@ no double-apply and nothing dropped.
 mechanism.
 
 **Steps:**
+
 1. RED: `tests/part2/concurrentLoops.test.ts` — seed a job with ~2500 matching items (≥5
    chunks at `CHUNK_SIZE=500`); run `WORKER_POOL_SIZE` (3) concurrent loop-equivalents against
    it with **no** manual edits anywhere; drain to completion. Assert: every `job_items` row is
@@ -475,6 +495,7 @@ mechanism.
 ## Task 11: Progress endpoint and retry-failed endpoint
 
 **Interfaces — Produces:**
+
 - `GET /jobs/:id` → `{ id, status, totalCount, matchedCount, truncated, counts: { done, pending, skippedConflict, failed }, backedOff, lastProgressAt, errorMessage, classification }`
   where `classification` is `running | backing_off | stuck | completed | failed`, derived per
   the design doc's three-way rule using the `backedOff` aggregate.
@@ -483,6 +504,7 @@ mechanism.
   `running`, in one transaction; no `Idempotency-Key` (a second call is a 0-row no-op).
 
 **Steps:**
+
 1. RED: `tests/part2/progress.test.ts` — mixed `done`/`pending`/`skipped_conflict`/`failed`
    state; assert the counts match committed rows exactly; assert `backedOff` counts only
    pending items with `next_attempt_at > now()`; assert `classification` is `backing_off` when
@@ -507,12 +529,13 @@ mechanism.
 ## Task 12: Isolation and snapshot semantics
 
 **Steps:**
+
 1. RED: `tests/part2/isolation.test.ts` — run a bulk job in workspace A to completion; assert
    zero opportunities, `job_items` or `transitions` in workspace B were created or modified
    (compare a full before/after snapshot of B's rows including `updated_at` and `version`).
    Run. Expected: FAIL — module not found.
 2. RED: `tests/part2/snapshot.test.ts` — an opportunity that does **not** match the filter at
-   submission is edited afterwards so that it *would* match; run the job to completion; assert
+   submission is edited afterwards so that it _would_ match; run the job to completion; assert
    it is untouched (no `job_items` row, no transition, `version` unchanged). And the converse:
    an opportunity that matched at submission but is edited to stop matching is **still** moved
    (selection is final) — unless a version bump makes it a conflict, in which case
@@ -534,6 +557,7 @@ cross-workspace or cross-pipeline stage, writes a `transitions` row with `job_id
 base64 cursor).
 
 **Steps:**
+
 1. RED: `tests/part1/opportunities.test.ts` — create returns 201 with `version=1`; move bumps
    version and writes a transition; move with a stale `expectedVersion` → 409 and no mutation;
    a full paginated walk over ≥250 rows with `limit=100` yields every row exactly once, no
@@ -554,6 +578,7 @@ base64 cursor).
 ## Task 14: Full-scale seed
 
 **Steps:**
+
 1. Run `npm run seed -- --large` against the dev database: one 500 000-row workspace with the
    12-stage funnel plus 5 small workspaces of 2 000–5 000 rows each. Expected: completes, and
    `SELECT count(*)` confirms the totals; `ANALYZE` ran.
@@ -577,6 +602,7 @@ migrates, seeds a small demo dataset, starts `api` and `worker`, and runs the Je
 `api`, `worker`, `test`, with health checks and `depends_on: condition: service_healthy`.
 
 **Steps:**
+
 1. Write the `Dockerfile` and `docker-compose.yml`.
 2. `podman compose -f docker-compose.yml config` — Expected: parses, prints the resolved model,
    exit 0.
@@ -593,6 +619,7 @@ migrates, seeds a small demo dataset, starts `api` and `worker`, and runs the Je
 ## Task 16: Real-process kill/resume integration test
 
 **Steps:**
+
 1. RED: `tests/integration/killResume.test.ts` — submit a job with several thousand items;
    spawn `src/worker/index.ts` as a child process; poll until a meaningful fraction is `done`;
    `SIGKILL` it; assert `last_progress_at` stops advancing and the remaining items are still
@@ -615,13 +642,14 @@ migrates, seeds a small demo dataset, starts `api` and `worker`, and runs the Je
 `killResume.ts`, `report.ts`; npm script `bench:all`; JSON results under `bench-results/`.
 
 **Steps:**
+
 1. `bulkMove.ts` — submit a ~50 000-row filter, poll every 500 ms, report wall clock,
    items/sec, and a bucketed throughput timeseries (steady vs degrading). Separately time the
    `POST /jobs/bulk-move` request itself for **two** filter shapes: (a) stage-only, (b) broad
    (`status` + `valueMin`, no stage/owner narrowing). Report the two submission latencies
    separately.
-2. `interactiveLoad.ts` — steady-rate create/move/list against the *same* workspace as a
-   running bulk job, and against a *different* small workspace, plus a no-job baseline for
+2. `interactiveLoad.ts` — steady-rate create/move/list against the _same_ workspace as a
+   running bulk job, and against a _different_ small workspace, plus a no-job baseline for
    both; report p95/p99 and the delta from baseline.
 3. `killResume.ts` — the benchmark variant of Task 16 using container kill, reporting
    kill-to-completion time plus the double-apply and dropped-item proofs.
@@ -640,6 +668,7 @@ migrates, seeds a small demo dataset, starts `api` and `worker`, and runs the Je
 **Goal.** Written last, describing measured behaviour rather than intended behaviour.
 
 **DESIGN.md must contain all seven sections as separate headings:**
+
 1. Chunking + cursor-restart mechanism + the index that makes chunking cheap.
 2. Idempotency model: key, storage, what it protects, and the gap where a retry still slips
    through (client minting a fresh key per retry).
@@ -660,6 +689,7 @@ broad-filter submission latency from Task 17.
 not-implemented list drawn from the design doc's Explicit Exclusions.
 
 **Steps:**
+
 1. Write `BENCHMARKS.md` via `npm run bench:report` (generated numbers).
    Expected: tables contain real measured values, no placeholders.
 2. Write `DESIGN.md` with all 7 headings. Expected: `grep -c '^## '` ≥ 7 and each of the seven
@@ -679,7 +709,7 @@ check deliberately:
 - A filter whose predicate matches **zero** rows: does submission return a 202 with
   `totalCount: 0`, and does the finalize sweep immediately complete a job with no items? (A
   job with zero `job_items` satisfies `NOT EXISTS (pending)` trivially — confirm it finalizes
-  `completed` rather than hanging `running`, and that it isn't finalized *before* the snapshot
+  `completed` rather than hanging `running`, and that it isn't finalized _before_ the snapshot
   insert commits.)
 - `Idempotency-Key` absent entirely, empty string, or absurdly long.
 - A `filter` containing unexpected keys, or `valueMin > valueMax`, or non-ISO dates.

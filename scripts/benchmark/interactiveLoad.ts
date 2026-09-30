@@ -54,11 +54,9 @@ interface LoadTarget {
 async function fire(target: LoadTarget, index: number, pool: string[]): Promise<Sample> {
   const roll = index % 4;
   if (roll < 2) {
-    const result = await http<unknown>(
-      'GET',
-      `/stages/${target.stageA}/opportunities?limit=50`,
-      { workspaceId: target.workspaceId },
-    );
+    const result = await http<unknown>('GET', `/stages/${target.stageA}/opportunities?limit=50`, {
+      workspaceId: target.workspaceId,
+    });
     return { kind: 'list', ms: result.ms, status: result.status };
   }
   if (roll === 2) {
@@ -136,7 +134,13 @@ function targetFor(dataset: BenchDataset, which: 'primary' | 'neighbour'): LoadT
   };
 }
 
-function scenario(label: string, workspace: string, withJob: boolean, samples: Sample[], overlapMs: number) {
+function scenario(
+  label: string,
+  workspace: string,
+  withJob: boolean,
+  samples: Sample[],
+  overlapMs: number,
+) {
   const ok = samples.filter((sample) => sample.status < 400);
   return {
     label,
@@ -180,7 +184,9 @@ async function main(): Promise<void> {
       },
     );
     if (submission.status !== 202) {
-      throw new Error(`submission failed (${submission.status}): ${JSON.stringify(submission.body)}`);
+      throw new Error(
+        `submission failed (${submission.status}): ${JSON.stringify(submission.body)}`,
+      );
     }
     const jobId = submission.body.jobId;
 
@@ -205,10 +211,34 @@ async function main(): Promise<void> {
       : { samples: [], overlapMs: 0 };
 
     const scenarios = [
-      scenario('baseline', 'same workspace as job', false, primaryBaseline.samples, primaryBaseline.overlapMs),
-      scenario('under bulk job', 'same workspace as job', true, primaryUnderJob.samples, primaryUnderJob.overlapMs),
-      scenario('baseline', 'different workspace', false, neighbourBaseline.samples, neighbourBaseline.overlapMs),
-      scenario('under bulk job', 'different workspace', true, neighbourUnderJob.samples, neighbourUnderJob.overlapMs),
+      scenario(
+        'baseline',
+        'same workspace as job',
+        false,
+        primaryBaseline.samples,
+        primaryBaseline.overlapMs,
+      ),
+      scenario(
+        'under bulk job',
+        'same workspace as job',
+        true,
+        primaryUnderJob.samples,
+        primaryUnderJob.overlapMs,
+      ),
+      scenario(
+        'baseline',
+        'different workspace',
+        false,
+        neighbourBaseline.samples,
+        neighbourBaseline.overlapMs,
+      ),
+      scenario(
+        'under bulk job',
+        'different workspace',
+        true,
+        neighbourUnderJob.samples,
+        neighbourUnderJob.overlapMs,
+      ),
     ];
 
     const delta = (base: (typeof scenarios)[number], under: (typeof scenarios)[number]) => ({

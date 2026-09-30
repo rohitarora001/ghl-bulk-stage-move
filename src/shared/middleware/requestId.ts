@@ -17,8 +17,7 @@ const MAX_REQUEST_ID_LENGTH = 128;
 export function requestId(): RequestHandler {
   return function requestIdMiddleware(req: Request, _res: Response, next: NextFunction): void {
     const supplied = req.header(REQUEST_ID_HEADER);
-    req.id =
-      supplied && supplied.length <= MAX_REQUEST_ID_LENGTH ? supplied : randomUUID();
+    req.id = supplied && supplied.length <= MAX_REQUEST_ID_LENGTH ? supplied : randomUUID();
     next();
   };
 }

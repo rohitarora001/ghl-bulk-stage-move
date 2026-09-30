@@ -76,7 +76,10 @@ describe('bulk-move truncation at BULK_MAX_ITEMS', () => {
 
     // Deterministic selection by (created_at, id): a client who resubmits after the first job
     // finishes gets the next slice, rather than a random re-draw that revisits done rows.
-    const expected = created.slice(0, MAX_ITEMS).map((row) => row.id).sort();
+    const expected = created
+      .slice(0, MAX_ITEMS)
+      .map((row) => row.id)
+      .sort();
     expect(items.map((item) => item.opportunityId).sort()).toEqual(expected);
 
     const job = await adminPrisma.job.findUniqueOrThrow({ where: { id: response.body.jobId } });

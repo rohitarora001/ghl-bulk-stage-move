@@ -40,7 +40,13 @@ async function timeSubmission(
   workspaceId: string,
   filter: Record<string, unknown>,
   targetStageId: string,
-): Promise<{ ms: number; jobId: string; totalCount: number; matchedCount: number | null; truncated: boolean }> {
+): Promise<{
+  ms: number;
+  jobId: string;
+  totalCount: number;
+  matchedCount: number | null;
+  truncated: boolean;
+}> {
   const result = await http<{
     jobId: string;
     totalCount: number;
@@ -71,11 +77,7 @@ async function main(): Promise<void> {
   try {
     // Both submissions happen with no worker running, so neither one's latency includes contention
     // from the other's items being drained.
-    const stageOnly = await timeSubmission(
-      dataset.workspaceId,
-      { stageId: source.id },
-      target.id,
-    );
+    const stageOnly = await timeSubmission(dataset.workspaceId, { stageId: source.id }, target.id);
     const broad = await timeSubmission(
       dataset.workspaceId,
       { status: 'open', valueMin: 500 },

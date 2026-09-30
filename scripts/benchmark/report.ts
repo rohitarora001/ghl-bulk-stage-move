@@ -20,8 +20,18 @@ interface BulkMoveResult {
     targetStage: { name: string; count: number };
   };
   submission: {
-    stageOnly: { latencyMs: number; totalCount: number; matchedCount: number | null; truncated: boolean };
-    broad: { latencyMs: number; totalCount: number; matchedCount: number | null; truncated: boolean };
+    stageOnly: {
+      latencyMs: number;
+      totalCount: number;
+      matchedCount: number | null;
+      truncated: boolean;
+    };
+    broad: {
+      latencyMs: number;
+      totalCount: number;
+      matchedCount: number | null;
+      truncated: boolean;
+    };
   };
   drain: {
     itemCount: number;
@@ -54,7 +64,11 @@ interface InteractiveResult {
   generatedAt: string;
   hardware: Hardware;
   config: { ratePerSecond: number; baselineMs: number; withJobMs: number; mix: string };
-  job: { itemCount: number; doneAtEndOfPrimaryWindow: number; stillRunningAfterPrimaryWindow: boolean };
+  job: {
+    itemCount: number;
+    doneAtEndOfPrimaryWindow: number;
+    stillRunningAfterPrimaryWindow: boolean;
+  };
   scenarios: LoadScenario[];
   deltas: {
     workspace: string;
@@ -154,7 +168,7 @@ function bulkSection(result: BulkMoveResult | null): string {
     `| Applied / skipped on conflict / failed | ${num(drain.done)} / ${drain.skippedConflict} / ${drain.failed} |`,
     '',
     `Throughput is **${trend}** (last third / first third = ${drain.degradationRatio}). ` +
-      'That is the shape the design predicts: the claim query filters on `status = \'pending\'` ' +
+      "That is the shape the design predicts: the claim query filters on `status = 'pending'` " +
       'against a partial index that shrinks as the job drains, so finding the next chunk does not ' +
       'get more expensive as the finished ones pile up.',
     '',
@@ -204,7 +218,7 @@ function loadSection(result: InteractiveResult | null): string {
         `${d.p99BaselineMs} → ${d.p99UnderJobMs} ms (${d.p99DeltaMs >= 0 ? '+' : ''}${d.p99DeltaMs}) |`,
     ),
     '',
-    'The mechanism behind these numbers is the worker role\'s `connection_limit=3`, not the ' +
+    "The mechanism behind these numbers is the worker role's `connection_limit=3`, not the " +
       'api/worker process split: separate processes would still hold separate pools. The hard ' +
       'Postgres-side cap is what stops a bulk job from taking connections interactive traffic needs.',
     result.job.stillRunningAfterPrimaryWindow

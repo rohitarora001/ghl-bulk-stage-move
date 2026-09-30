@@ -21,7 +21,12 @@ export default tseslint.config(
     files: ['**/*.ts'],
     languageOptions: {
       parserOptions: { ecmaVersion: 2022, sourceType: 'module' },
-      globals: { process: 'readonly', console: 'readonly', require: 'readonly', module: 'readonly' },
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        require: 'readonly',
+        module: 'readonly',
+      },
     },
     settings: {
       'import/resolver': {

@@ -61,9 +61,7 @@ describe('concurrent submissions with the same idempotency key', () => {
   });
 
   it('answers ten simultaneous retries with the same job', async () => {
-    const responses = await Promise.all(
-      Array.from({ length: 10 }, () => submit(a, 'stampede')),
-    );
+    const responses = await Promise.all(Array.from({ length: 10 }, () => submit(a, 'stampede')));
 
     const jobIds = new Set(responses.map((response) => response.body.jobId));
     expect(jobIds.size).toBe(1);

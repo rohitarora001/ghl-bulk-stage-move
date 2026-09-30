@@ -108,7 +108,11 @@ describe('the finalize sweep racing a concurrent writer', () => {
 
       await Promise.all([
         workerFor(adminPrisma).finalizeDrainedJobs(),
-        workerFor(adminPrisma).recordChunkFailure(job.jobId, [lastOpportunityId], 'injected failure'),
+        workerFor(adminPrisma).recordChunkFailure(
+          job.jobId,
+          [lastOpportunityId],
+          'injected failure',
+        ),
       ]);
 
       const finalJob = await adminPrisma.job.findUniqueOrThrow({ where: { id: job.jobId } });

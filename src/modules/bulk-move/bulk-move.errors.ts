@@ -36,10 +36,7 @@ export class IdempotencyKeyConflictError extends ConflictError {
 /** The move target is not a stage of this workspace. */
 export class TargetStageInvalidError extends BadRequestError {
   constructor() {
-    super(
-      ERROR_CODE.TARGET_STAGE_INVALID,
-      'targetStageId does not name a stage in this workspace',
-    );
+    super(ERROR_CODE.TARGET_STAGE_INVALID, 'targetStageId does not name a stage in this workspace');
   }
 }
 

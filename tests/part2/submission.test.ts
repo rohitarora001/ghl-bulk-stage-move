@@ -25,7 +25,10 @@ function submit(workspaceId: string | null, body: unknown, idempotencyKey = 'key
 }
 
 /** A second pipeline inside an existing workspace, for the cross-pipeline rule. */
-async function addPipeline(fixture: WorkspaceFixture, name: string): Promise<{ stageIds: string[] }> {
+async function addPipeline(
+  fixture: WorkspaceFixture,
+  name: string,
+): Promise<{ stageIds: string[] }> {
   const pipeline = await adminPrisma.pipeline.create({
     data: { workspaceId: fixture.workspaceId, name },
   });

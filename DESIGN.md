@@ -411,6 +411,14 @@ being given openly rather than left to be discovered.
   and nothing has touched this job for 60 s", which is true of a dead worker and also of a worker
   that is extremely busy with another tenant's job. `backedOff` removes the common false positive
   (everything waiting out its own exponential backoff); it does not remove this one.
+- **The graceful shutdown never runs under `docker compose`.** Measured, not reasoned: `stop
+  --time 15` on the worker container produced zero `worker_shutdown` / `loop_stopped` lines and exit
+  code 1. The service command is `npx ts-node …`, so `npx` is PID 1 and SIGTERM kills the Node child
+  before the handler in `app/worker.ts` can abort the loops. The drain is not slow — it never
+  starts. Data is unaffected, because a killed chunk rolls back and its items return to `pending`,
+  which is the same path the kill/resume benchmark exercises; the cost is a noisy stop and a
+  misleading exit code. Fixing it means `exec`-ing node directly or adding an init process.
+
 - **No auth.** `X-Workspace-Id` is trusted as given. It is validated against the `workspaces` table,
   so it cannot be a fabricated id, but any caller may claim any workspace. Out of scope per the
   brief, and load-bearing for every isolation claim above — those claims are about what the code

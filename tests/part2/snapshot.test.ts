@@ -76,9 +76,7 @@ describe('snapshot, not live set', () => {
     });
     expect(untouched.stageId).toBe(latecomer.stageId);
     expect(untouched.version).toBe(latecomer.version);
-    expect(
-      await adminPrisma.transition.count({ where: { opportunityId: latecomer.id } }),
-    ).toBe(0);
+    expect(await adminPrisma.transition.count({ where: { opportunityId: latecomer.id } })).toBe(0);
   });
 
   it('also ignores a row created after submission, even one that matches perfectly', async () => {
@@ -114,7 +112,9 @@ describe('snapshot, not live set', () => {
 
     const item = await adminPrisma.jobItem.findFirstOrThrow({ where: { jobId } });
     expect(item.status).toBe('done');
-    expect(await adminPrisma.transition.count({ where: { opportunityId: leaver.id, jobId } })).toBe(1);
+    expect(await adminPrisma.transition.count({ where: { opportunityId: leaver.id, jobId } })).toBe(
+      1,
+    );
   });
 
   it('records skipped_conflict when the edit that removed it from the filter also bumped version', async () => {
@@ -136,6 +136,8 @@ describe('snapshot, not live set', () => {
 
     const kept = await adminPrisma.opportunity.findUniqueOrThrow({ where: { id: leaver.id } });
     expect(kept.stageId).toBe(fixture.stageIds[2]!);
-    expect(await adminPrisma.transition.count({ where: { opportunityId: leaver.id, jobId } })).toBe(0);
+    expect(await adminPrisma.transition.count({ where: { opportunityId: leaver.id, jobId } })).toBe(
+      0,
+    );
   });
 });

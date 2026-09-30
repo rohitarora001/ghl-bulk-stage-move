@@ -73,7 +73,9 @@ async function main(): Promise<void> {
       },
     );
     if (submission.status !== 202) {
-      throw new Error(`submission failed (${submission.status}): ${JSON.stringify(submission.body)}`);
+      throw new Error(
+        `submission failed (${submission.status}): ${JSON.stringify(submission.body)}`,
+      );
     }
     const jobId = submission.body.jobId;
     const itemCount = submission.body.totalCount;
@@ -145,7 +147,9 @@ async function main(): Promise<void> {
       },
       correctness: {
         duplicateApplies: duplicates.length,
-        droppedItems: itemCount - (finished.counts.done + finished.counts.skippedConflict + finished.counts.failed),
+        droppedItems:
+          itemCount -
+          (finished.counts.done + finished.counts.skippedConflict + finished.counts.failed),
         transitionsWritten: appliedCount,
         finalCounts: finished.counts,
         finalStatus: finalized.status,

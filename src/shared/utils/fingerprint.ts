@@ -22,5 +22,7 @@ function canonicalize(value: unknown): unknown {
 
 /** A stable SHA-256 of a request payload, insensitive to key order. */
 export function fingerprint(value: unknown): string {
-  return createHash('sha256').update(JSON.stringify(canonicalize(value))).digest('hex');
+  return createHash('sha256')
+    .update(JSON.stringify(canonicalize(value)))
+    .digest('hex');
 }

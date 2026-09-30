@@ -68,8 +68,9 @@ describe('jobs and job_items schema', () => {
 
     // Same workspace, same key: the second submission of a retried request must not create a
     // second job, and the database is what guarantees it under concurrency.
-    expect(await sqlStateOf(() => createJob(a.workspaceId, a.stageIds[1]!, 'move-to-qualified')))
-      .toBe(UNIQUE_VIOLATION);
+    expect(
+      await sqlStateOf(() => createJob(a.workspaceId, a.stageIds[1]!, 'move-to-qualified')),
+    ).toBe(UNIQUE_VIOLATION);
 
     // A different tenant reusing the same key is a different job — keys are scoped per workspace,
     // not global, or one tenant's client could block another tenant's submission.
