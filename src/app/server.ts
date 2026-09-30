@@ -1,7 +1,7 @@
 import { getConfig } from '@config';
 import { disconnectAll } from '@shared/database';
 import { logger } from '@shared/logger';
-import { createApp } from './server';
+import { createApp } from './createApp';
 
 const server = createApp().listen(getConfig().port, () => {
   logger.info('api_listening', { port: getConfig().port });

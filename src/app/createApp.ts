@@ -1,9 +1,8 @@
 import express, { type Express } from 'express';
-import { container } from '@app/container';
+import { bulkMoveRoutes } from '@modules/bulk-move/bulk-move.routes';
 import { opportunitiesRoutes } from '@modules/opportunities/opportunities.routes';
-import { errorHandler, notFound, requestId } from '@shared/middleware';
-import { workspaceScope } from './middleware/workspaceScope';
-import { jobsRouter } from './routes/jobs';
+import { errorHandler, notFound, requestId, workspaceScope } from '@shared/middleware';
+import { container, type Container } from './container';
 
 /** Bodies past this are rejected by the parser and answered 413 by the error handler. */
 const MAX_BODY_SIZE = '1mb';
@@ -14,8 +13,9 @@ const MAX_BODY_SIZE = '1mb';
  *
  * The order below is the contract: correlation id first so every later line can carry it, parsing
  * before anything reads a body, tenant scope before any route, and the two terminal handlers last.
+ * `/health` sits above the scope on purpose — a liveness probe has no tenant.
  */
-export function createApp(): Express {
+export function createApp(dependencies: Container = container): Express {
   const app = express();
 
   app.use(requestId());
@@ -25,9 +25,13 @@ export function createApp(): Express {
     res.json({ status: 'ok' });
   });
 
-  app.use(workspaceScope());
-  app.use(jobsRouter());
-  app.use(opportunitiesRoutes(container.opportunitiesController));
+  app.use(
+    workspaceScope({
+      workspaceExists: (workspaceId) => dependencies.workspacesRepository.exists(workspaceId),
+    }),
+  );
+  app.use(bulkMoveRoutes(dependencies.bulkMoveController));
+  app.use(opportunitiesRoutes(dependencies.opportunitiesController));
 
   app.use(notFound());
   app.use(errorHandler());

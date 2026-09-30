@@ -397,6 +397,48 @@ Two things worth recording:
    (`collision`, `retryFailed`, `snapshot` called `moveOpportunity` directly). Same assertions,
    same behavior under test; only the call site moved.
 
+## Phase 3 — `bulk-move` and `workspaces` (complete)
+
+Suite 129/129 (103 original + 11 opportunities + 15 bulk-move unit tests), `build`, `typecheck`
+and `lint` clean. **`src/api/` no longer exists.**
+
+`jobService.ts` (the 290-line god file), `progressService.ts`, `retryService.ts`,
+`routes/jobs.ts`, `schemas.ts`, `errors.ts`, `server.ts` and `middleware/workspaceScope.ts` became:
+
+| New location | Holds |
+|---|---|
+| `modules/bulk-move/bulk-move.routes.ts` | three paths, their middleware, controller binding |
+| `…/bulk-move.middleware.ts` | the `Idempotency-Key` policy — validation, so it runs before the route |
+| `…/bulk-move.controller.ts` | validated input → service → 202/200/200 |
+| `…/bulk-move.service.ts` | submission rules, replay/409 decision, the progress classification |
+| `…/bulk-move.repository.ts` | the snapshot CTE, the progress aggregate, the retry transaction, the filter predicates |
+| `…/bulk-move.{schemas,types,errors,constants}.ts` | request shapes, domain types, seven domain errors, status/limit constants |
+| `modules/workspaces/workspaces.repository.ts` | the one question anything asks: does this workspace exist |
+| `shared/middleware/workspaceScope.ts` | the tenant scope, with the existence check **injected** |
+| `shared/utils/fingerprint.ts` | canonical-JSON SHA-256, now feature-agnostic |
+| `app/createApp.ts`, `app/server.ts` | the Express factory and the HTTP entrypoint |
+
+Decisions worth recording:
+
+1. **`workspaceScope` keeps its place in `shared/middleware` by inverting the dependency.** The
+   layer rule forbids `shared/` importing a feature module, and the middleware needed a workspace
+   lookup. It now takes `{ workspaceExists }` from the composition root, so the cross-cutting
+   concern stays cross-cutting and the SQL stays in the module that owns the table.
+2. **`createApp(dependencies = container)`** takes its container as a defaulted parameter, so a
+   test can build an app over fakes without touching the process-wide wiring.
+3. **The `Idempotency-Key` rules are middleware, not controller code.** They are validation, and
+   they have to run before the snapshot query — a key too long for its btree index fails at write
+   time as a 500 for what is plainly the caller's input.
+4. **Express request augmentation is consolidated** into `shared/types/express.d.ts`
+   (`id`, `workspaceId`, `idempotencyKey`, `validated`), each field naming the middleware that
+   writes it. Two modules had been declaring their own `declare global` blocks.
+5. **`fingerprintRequest(filter, targetStageId)` became `fingerprint(value)`.** Same canonical-JSON
+   SHA-256 over the same `{ filter, targetStageId }` object, so existing stored fingerprints still
+   match; the helper simply no longer knows what a filter is.
+
+Entrypoint paths moved with the code: `package.json` (`main`, `dev:api`, `start`, `start:api`) and
+the compose `api` service now name `src/app/server.ts` / `dist/src/app/server.js`.
+
 ## 11. Follow-ups (out of scope here)
 
 Authentication and authorization; rate limiting; `helmet`/CORS; job cancellation; retention policy

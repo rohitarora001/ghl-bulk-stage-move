@@ -1,6 +1,6 @@
 import request from 'supertest';
 import { resetConfigCache } from '@config';
-import { createApp } from '../../src/api/server';
+import { createApp } from '@app/createApp';
 import {
   adminPrisma,
   createOpportunity,

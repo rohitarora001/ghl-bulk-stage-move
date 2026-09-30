@@ -77,7 +77,7 @@ services:
 
   api:
     <<: *app
-    command: ['npx', 'ts-node', '-r', 'tsconfig-paths/register', 'src/api/index.ts']
+    command: ['npx', 'ts-node', '-r', 'tsconfig-paths/register', 'src/app/server.ts']
     environment:
       <<: *app-env
       PORT: '3000'
