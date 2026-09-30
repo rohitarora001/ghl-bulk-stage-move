@@ -34,7 +34,7 @@ The suite's result is its exit code:
 
 ```bash
 docker compose ps -a          # test → Exited (0)
-docker compose logs test      # Test Suites: 30 passed, Tests: 103 passed
+docker compose logs test      # Test Suites: 32 passed, Tests: 129 passed
 ```
 
 `api` and `worker` deliberately stay up after the tests finish — the brief is "one command brings up
@@ -70,7 +70,8 @@ export DATABASE_URL_WORKER='postgresql://app_worker:app_worker@localhost:55433/g
 npm test
 ```
 
-30 suites / 103 tests. They truncate every table between cases, so point them at `ghl_test` — never
+32 suites / 129 tests — 103 against real Postgres, 26 service unit tests against fake
+repositories. The Postgres ones truncate every table between cases, so point them at `ghl_test` — never
 at a database holding a dataset you want to keep.
 
 ### Benchmarks
@@ -132,7 +133,7 @@ docker compose start worker    # the job drains to completion, nothing applied t
 
 ### Configuration
 
-All optional except the three database URLs. Parsed and validated at boot (`src/shared/config.ts`).
+All optional except the three database URLs. Parsed and validated at boot (`src/config/env.ts`).
 
 | Variable | Default | |
 |---|---:|---|
@@ -165,7 +166,7 @@ All optional except the three database URLs. Parsed and validated at boot (`src/
   `running | backing_off | stuck | completed | failed`, and `POST /jobs/:id/retry-failed`.
 - Tenant isolation: workspace-leading indexes, two Postgres roles with role-level statement
   timeouts, and two connection pools whose worker-side `connection_limit=3` is the actual mechanism.
-- 30 test suites / 103 tests, including a real-process SIGKILL-and-resume integration test, an
+- 32 test suites / 129 tests, including a real-process SIGKILL-and-resume integration test, an
   `EXPLAIN`-reading test that pins the claim query's index, and three benchmarks that measure the
   shipped entrypoints as separate processes.
 
@@ -184,14 +185,183 @@ Copied from the design's Explicit Exclusions, verbatim:
 [DESIGN.md](DESIGN.md#honest-weak-spots) adds the weak spots that are not absences but measured
 limitations of what *is* built.
 
-## Layout
+## Architecture
+
+Feature modules with strict layering. Dependencies point inward only, and the two rules that are
+easiest to break — a service reaching for Prisma, a controller reaching past its service — are
+enforced by ESLint rather than by review.
+
+```mermaid
+flowchart TD
+    subgraph entry["src/app — composition root"]
+        server["server.ts<br/>HTTP entrypoint"]
+        worker["worker.ts<br/>claim loops + sweeper"]
+        createApp["createApp.ts"]
+        container["container.ts<br/>manual DI"]
+    end
+
+    subgraph modules["src/modules — features"]
+        routes["*.routes.ts<br/>paths + validation"]
+        controller["*.controller.ts<br/>HTTP in/out"]
+        service["*.service.ts<br/>business rules"]
+        repository["*.repository.ts<br/>Prisma + SQL"]
+        processor["jobs/*.processor.ts<br/>one unit of background work"]
+    end
+
+    subgraph shared["src/shared — cross-cutting"]
+        middleware["middleware<br/>requestId, workspaceScope,<br/>validate, notFound, errorHandler"]
+        errors["errors<br/>AppError + ERROR_CODE"]
+        database["database<br/>3 pooled clients, withTransaction"]
+        runtime["worker-runtime<br/>pollingLoop, sleep"]
+    end
+
+    config["src/config — the only reader of process.env"]
+    registry["src/jobs/registry.ts<br/>job kind → processor"]
+    db[("PostgreSQL")]
+
+    server --> createApp --> routes --> controller --> service --> repository --> db
+    createApp --> middleware
+    worker --> registry --> processor --> service
+    worker --> runtime
+    container -.builds.-> service
+    container -.builds.-> repository
+    service --> errors
+    repository --> database --> db
+    modules --> config
+    shared --> config
+```
+
+### Where things live
+
+| Question | Answer |
+|---|---|
+| Where is the endpoint for X? | `modules/<feature>/<feature>.routes.ts` |
+| Where is the business rule for Y? | `modules/<feature>/<feature>.service.ts` |
+| Where is the DB query for Z? | `modules/<feature>/<feature>.repository.ts` |
+| Where is job J processed? | `modules/<feature>/jobs/<job>.processor.ts`, listed in `jobs/registry.ts` |
+| Where are env vars defined? | `config/env.ts` — nothing else reads `process.env` |
+| Where does an error become a response? | `shared/middleware/errorHandler.ts` — the only place |
 
 ```
-src/api/        Express app, routes, services (submission, progress, retry, part 1)
-src/worker/     claim loops, claimAndApplyChunk, picker/sweep/backoff queries
-src/db/         the two Prisma clients and their pools
-src/shared/     config parsing, logger
-prisma/         schema, migrations (partial indexes hand-added), roles + grants SQL
-scripts/        migrate, seed, benchmark/
-tests/          db, part1, part2, integration, unit
+src/
+├── app/                    composition root: createApp, server, worker, container
+├── config/                 env schema + typed config (the only process.env reader)
+├── jobs/registry.ts        job kind → processor
+├── modules/
+│   ├── bulk-move/          submission, progress, retry + jobs/ (claim, sweep)
+│   ├── opportunities/      create, single move, keyset listing
+│   └── workspaces/         workspace lookup behind the tenant scope
+└── shared/                 database, errors, http, logger, middleware, types, utils,
+                            worker-runtime
+prisma/                     schema, migrations (partial indexes hand-added), roles + grants
+scripts/                    migrate, seed, benchmark/
+tests/                      db, part1, part2, integration — everything that needs real Postgres
 ```
+
+Service unit tests live beside the code they test, in `modules/*/__tests__/`, and run against fake
+repositories with no database. Anything that needs real Postgres — and most of this system's
+interesting behaviour does — stays under `tests/`.
+
+### Layer rules
+
+| Layer | May use | Must not |
+|---|---|---|
+| Routes | path, method, middleware, controller binding | any logic |
+| Controller | validated input, service calls, response shaping | business rules, Prisma, try/catch |
+| Service | rules, orchestration, transaction boundaries, repositories | `req`/`res`, Express, Prisma |
+| Repository | Prisma, SQL, row mapping | business rules, HTTP |
+| Processor | deserialise work, call a service, decide the retry cadence | business logic, Prisma |
+| Middleware | cross-cutting concerns | feature-specific logic |
+
+`eslint.config.mjs` enforces the forbidden column: `shared/` and `config/` cannot import a module,
+a module cannot import the composition root, `*.service.ts` cannot import `@prisma/client` or
+`express`, and `*.controller.ts` cannot import a repository. `import/no-cycle` bans circular
+imports outright.
+
+### Request lifecycle
+
+```
+requestId → express.json(1mb) → [/health] → workspaceScope → validate(schema) → controller
+  → service (rules, transaction boundary) → repository (SQL) → PostgreSQL
+  ← controller shapes status + JSON
+  ✗ anything thrown → errorHandler → { error: { code, message, details? } }
+```
+
+`workspaceScope` is the only place `X-Workspace-Id` is read; handlers see `req.workspaceId`.
+`validate()` parks parsed input on `req.validated`, so a handler reading `req.body` directly is
+visible in review. Services and repositories throw; only `errorHandler` writes a status code.
+
+### Job lifecycle
+
+```
+POST /jobs/bulk-move
+  → one transaction: INSERT jobs + INSERT INTO job_items SELECT … (the snapshot)
+                     the filter is stored but never re-evaluated
+
+worker (src/app/worker.ts)
+  ├─ N × claim loop        pickJob → processChunk → touchProgress
+  │     processChunk       BEGIN; claim <= CHUNK_SIZE items FOR UPDATE SKIP LOCKED;
+  │                        lock their opportunities ORDER BY id; apply; mark done /
+  │                        skipped_conflict; COMMIT
+  │     on apply failure   re-run the same items one per transaction, so only the row that
+  │                        actually fails is penalised
+  └─ 1 × finalize sweeper  own timer, own connection: marks drained jobs completed / failed
+```
+
+`job_items.status` is the cursor — there is no persisted offset to drift. A killed worker rolls
+back to `pending`, and a partial unique index on `transitions (job_id, opportunity_id)` makes a
+double-apply structurally impossible.
+
+### Adding a module
+
+1. `src/modules/<feature>/` with `<feature>.{routes,controller,service,repository,schemas,types,errors,constants}.ts`.
+2. Repository first: intent-named methods over Prisma, returning domain shapes. It is the only
+   file in the module allowed to import `@prisma/client`.
+3. Service over the repository, taking it as a factory parameter. Throw the module's own errors;
+   never touch `req`/`res`.
+4. Controller: read `validated<T>(req, source)`, call the service, set status and JSON.
+5. Routes: `validate(schema, source, { code, message })` per input, then the controller handler.
+6. Wire it in `app/container.ts` and mount it in `app/createApp.ts`.
+7. Unit-test the service against a fake repository in `__tests__/`; integration-test the routes
+   under `tests/`.
+
+Background work adds `jobs/<job>.processor.ts` and one line in `jobs/registry.ts`.
+
+### Error codes
+
+Every error response is `{ "error": { "code", "message", "details"? } }`. `details` carries zod's
+issue list for body and query validation.
+
+| Code | Status | Means |
+|---|---:|---|
+| `workspace_required` | 400 | no `X-Workspace-Id` header |
+| `workspace_invalid` | 400 | header is not a uuid |
+| `workspace_unknown` | 400 | no such workspace (400, not 404, so ids cannot be enumerated) |
+| `invalid_json` | 400 | body is not valid JSON |
+| `invalid_body` | 400 | body failed its schema |
+| `invalid_query` | 400 | query parameters failed their schema |
+| `invalid_cursor` | 400 | pagination cursor did not decode |
+| `invalid_job_id` / `invalid_opportunity_id` / `invalid_stage_id` | 400 | path id is not a uuid |
+| `idempotency_key_required` | 400 | submission without the header |
+| `idempotency_key_invalid` | 400 | key longer than 255 characters |
+| `invalid_stage` | 400 | stage is not in this workspace and the named pipeline |
+| `invalid_target_stage` | 400 | move target is outside the record's pipeline |
+| `target_stage_invalid` | 400 | bulk target is not a stage of this workspace |
+| `filter_stage_invalid` | 400 | `filter.stageId` is not a stage of this workspace |
+| `cross_pipeline_move` | 400 | source and target stages are in different pipelines |
+| `not_found` | 404 | no such route |
+| `job_not_found` / `opportunity_not_found` / `stage_not_found` | 404 | no such row in this workspace |
+| `version_conflict` | 409 | `expectedVersion` is stale; `details` carries both versions |
+| `idempotency_key_conflict` | 409 | key reused for a different filter or target stage |
+| `payload_too_large` | 413 | body over 1mb |
+| `internal_error` | 500 | unplanned; the detail is in the logs, never in the response |
+
+### Conventions
+
+- `camelCase` values, `PascalCase` types and classes, `SCREAMING_SNAKE` constants,
+  `feature.role.ts` filenames.
+- Comments explain **why**. What the code does is the code's job.
+- Every service method carries a TSDoc header naming what it throws.
+- No magic values: statuses, error codes, limits and headers are constants.
+- Dependencies are injected through factory parameters; the only module-level singletons are the
+  Prisma clients in `shared/database`, and they are lazy.

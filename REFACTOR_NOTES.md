@@ -445,21 +445,56 @@ Authentication and authorization; rate limiting; `helmet`/CORS; job cancellation
 for `job_items` and `transitions`; per-tenant fairness in the picker; the eight suspected bugs
 above; an error-code table in the README.
 
+## Phase 5 — docs, dead code, conventions (complete)
+
+- **README rewritten** around the architecture: a mermaid diagram of the layers, a "where things
+  live" table answering the new-joiner questions, the layer rules with the lint rule that enforces
+  each, the request lifecycle, the job lifecycle, a step-by-step recipe for adding a module, the
+  conventions, and **an error-code table** — which closes suspected bug M6.
+- **Stale paths fixed** in README and DESIGN.md: every `src/api/...`, `src/worker/...`,
+  `src/db/...` and `src/shared/config.ts` reference now names the file that exists. Test counts
+  updated to 32 suites / 129 tests.
+- **Dead code removed**: `logger.withContext` (added in Phase 1, never used), `JOB_ITEM_STATUS`
+  (the SQL names those values inline), and the `UnauthorizedError` / `ForbiddenError` classes —
+  there is no authentication in scope, so nothing could throw them. `PayloadTooLargeError` was
+  kept and put to work in `errorHandler` instead of a bare `res.status(413)`.
+
+**Deliberate deviation 14: the Postgres-backed tests stay under `tests/`.** The brief asks for
+tests colocated in `modules/*/__tests__/`, and the service unit tests are. The rest need a real
+database, a migrated schema and a truncate between cases; they are integration tests by any
+reading, and the target structure's own `tests/ e2e / integration` is where they belong. Moving 30
+files that all pass would have been churn with a real chance of breaking the one suite that proves
+a killed worker resumes.
+
+## Phase 6 — verification
+
+`npm run build`, `npm run typecheck`, `npm run lint` and `npm test` all clean at every phase
+boundary, and again at the end: **32 suites / 129 tests**.
+
 ## 12. Parity checklist
 
-Filled in Phase 6; every row verified against a real request/response, not against the diff.
+Every route and job traced from its original file to its new home. The "verified by" column names
+the test that exercises it end to end — all of them are the pre-refactor tests, unchanged in
+intent, which is what makes them evidence rather than decoration.
 
-| Route / job | Original location | New location | Verified |
+| Route / job | Original location | New location | Verified by |
 |---|---|---|---|
-| GET `/health` | `api/server.ts` | | ☐ |
-| POST `/jobs/bulk-move` | `api/routes/jobs.ts` | | ☐ |
-| GET `/jobs/:id` | `api/routes/jobs.ts` | | ☐ |
-| POST `/jobs/:id/retry-failed` | `api/routes/jobs.ts` | | ☐ |
-| POST `/opportunities` | `api/routes/opportunities.ts` | | ☐ |
-| POST `/opportunities/:id/move` | `api/routes/opportunities.ts` | | ☐ |
-| GET `/stages/:stageId/opportunities` | `api/routes/opportunities.ts` | | ☐ |
-| 404 catch-all | `api/server.ts` | | ☐ |
-| error envelope | `api/server.ts` | | ☐ |
-| claim loop | `worker/index.ts` | | ☐ |
-| chunk apply + isolation | `worker/claimAndApplyChunk.ts` | | ☐ |
-| finalize sweep | `worker/index.ts` + `worker/queries.ts` | | ☐ |
+| GET `/health` | `api/server.ts` | `app/createApp.ts` | `tests/part2/submission.test.ts` (app boot) |
+| POST `/jobs/bulk-move` | `api/routes/jobs.ts` | `modules/bulk-move/bulk-move.routes.ts` → `.controller.ts` → `.service.ts` → `.repository.ts` | `submission`, `truncation`, `idempotency`, `idempotencyKeyRace`, `requestHardening` |
+| GET `/jobs/:id` | `api/routes/jobs.ts` | same module, `controller.progress` | `progress`, `isolation` |
+| POST `/jobs/:id/retry-failed` | `api/routes/jobs.ts` | same module, `controller.retryFailed` | `retryFailed`, `isolation` |
+| POST `/opportunities` | `api/routes/opportunities.ts` | `modules/opportunities/opportunities.routes.ts` | `part1/opportunities`, `crossPipelineStage` |
+| POST `/opportunities/:id/move` | `api/routes/opportunities.ts` | same module, `controller.move` | `part1/opportunities`, `collision`, `crossTenantStage` |
+| GET `/stages/:stageId/opportunities` | `api/routes/opportunities.ts` | same module, `controller.listByStage` | `part1/opportunities` (keyset + ties) |
+| `X-Workspace-Id` scope | `api/middleware/workspaceScope.ts` | `shared/middleware/workspaceScope.ts` + `modules/workspaces` | `isolation`, `submission` |
+| 404 catch-all | `api/server.ts` | `shared/middleware/notFound.ts` | `requestHardening` |
+| error envelope | `api/server.ts` | `shared/middleware/errorHandler.ts` | `requestHardening` (400/413/409), every 4xx test |
+| `Idempotency-Key` policy | `api/routes/jobs.ts` | `modules/bulk-move/bulk-move.middleware.ts` | `requestHardening`, `submission` |
+| claim loop | `worker/index.ts` `runLoop` | `app/worker.ts` `runLoop` → `jobs/bulk-stage-move.processor.ts` | `concurrentLoops`, `picker`, `killResume` |
+| chunk claim + apply | `worker/claimAndApplyChunk.ts` | `modules/bulk-move/bulk-move.worker.service.ts` `processChunk` | `chunk`, `alreadyAtTarget`, `collision`, `snapshot`, `resume` |
+| isolation pass | same file, `isolateChunk` | same service, private `isolateChunk` | `poisonIsolation`, `poisonChunk` |
+| failure backoff | `worker/queries.ts` `recordChunkFailure` | `bulk-move.worker.repository.ts` | `poisonChunk`, `retryFailed` |
+| job picker | `worker/queries.ts` | `bulk-move.worker.repository.ts` | `picker` |
+| finalize sweep | `worker/queries.ts` + `runSweepLoop` | `jobs/finalize-sweep.processor.ts` + repository | `drainedJobFinalizes`, `finalizeRace`, `sweepIndependence` |
+| claim index plan | — | unchanged SQL, same index | `claimPlan` (reads EXPLAIN) |
+| config + pool caps | `shared/config.ts`, `db/prismaClients.ts` | `config/env.ts`, `shared/database/` | `unit/config`, `db/roles` |

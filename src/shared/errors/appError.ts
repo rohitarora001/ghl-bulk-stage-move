@@ -28,20 +28,6 @@ export class BadRequestError extends AppError {
   }
 }
 
-/** 401 — no identity was presented. Unused today; there is no authentication in scope. */
-export class UnauthorizedError extends AppError {
-  constructor(code: string, message: string, details?: unknown) {
-    super(401, code, message, details);
-  }
-}
-
-/** 403 — an identity was presented and is not allowed to do this. */
-export class ForbiddenError extends AppError {
-  constructor(code: string, message: string, details?: unknown) {
-    super(403, code, message, details);
-  }
-}
-
 /**
  * 404 — no such row in this workspace.
  *

@@ -30,7 +30,7 @@ at-least-once, resumable-queue semantics a broker would, with one fewer system t
 ## 1. Chunking, the cursor, and the index that makes chunking cheap
 
 **Chunking.** A loop claims `CHUNK_SIZE` (default 500) items and applies them in *one* transaction
-(`src/worker/claimAndApplyChunk.ts`):
+(`src/modules/bulk-move/bulk-move.worker.service.ts`):
 
 ```sql
 SELECT id, opportunity_id, expected_version
@@ -201,7 +201,7 @@ one).
 
 At submission, one set-based statement enrols every currently-matching opportunity's `id` and
 `version` into `job_items`, inside the same transaction that creates the `jobs` row
-(`src/api/services/jobService.ts`). The stored `filter` is kept for display and debugging and is
+(`src/modules/bulk-move/bulk-move.service.ts`). The stored `filter` is kept for display and debugging and is
 **never re-evaluated**.
 
 ```sql

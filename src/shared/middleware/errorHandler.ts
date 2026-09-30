@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
-import { AppError, ERROR_CODE } from '@shared/errors';
+import { AppError, ERROR_CODE, PayloadTooLargeError } from '@shared/errors';
 import { logger } from '@shared/logger';
 
 /** The response envelope. Every error this API answers with has exactly this shape. */
@@ -44,7 +44,11 @@ export function errorHandler() {
       return;
     }
     if (bodyParser.type === 'entity.too.large') {
-      res.status(413).json(body(ERROR_CODE.PAYLOAD_TOO_LARGE, 'request body exceeds 1mb'));
+      const tooLarge = new PayloadTooLargeError(
+        ERROR_CODE.PAYLOAD_TOO_LARGE,
+        'request body exceeds 1mb',
+      );
+      res.status(tooLarge.statusCode).json(body(tooLarge.code, tooLarge.message));
       return;
     }
 

@@ -17,20 +17,3 @@ export const logger = {
   warn: (msg: string, meta?: Record<string, unknown>) => emit('warn', msg, meta),
   error: (msg: string, meta?: Record<string, unknown>) => emit('error', msg, meta),
 };
-
-export type Logger = typeof logger;
-
-/**
- * A logger that stamps every line with the same context — a request id, a job id, a loop id.
- *
- * Correlation is the whole point: one bulk move writes thousands of lines across three loops and a
- * sweeper, and without a shared key on each line they cannot be told apart after the fact.
- */
-export function withContext(context: Record<string, unknown>, base: Logger = logger): Logger {
-  return {
-    debug: (msg, meta) => base.debug(msg, { ...context, ...meta }),
-    info: (msg, meta) => base.info(msg, { ...context, ...meta }),
-    warn: (msg, meta) => base.warn(msg, { ...context, ...meta }),
-    error: (msg, meta) => base.error(msg, { ...context, ...meta }),
-  };
-}

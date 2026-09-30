@@ -8,14 +8,6 @@ export const MAX_IDEMPOTENCY_KEY_LENGTH = 255;
 /** The header that carries it. */
 export const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key';
 
-/** `job_items.status` — and the cursor the worker claims against. */
-export const JOB_ITEM_STATUS = {
-  PENDING: 'pending',
-  DONE: 'done',
-  SKIPPED_CONFLICT: 'skipped_conflict',
-  FAILED: 'failed',
-} as const;
-
 /** `jobs.status`. */
 export const JOB_STATUS = {
   RUNNING: 'running',
