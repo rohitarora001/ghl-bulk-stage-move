@@ -15,7 +15,12 @@
     "dev:worker": "ts-node-dev --respawn --transpile-only src/worker/index.ts",
     "dev": "concurrently -n api,worker -c blue,magenta \"npm:dev:api\" \"npm:dev:worker\"",
     "start:api": "node dist/src/api/index.js",
-    "start:worker": "node dist/src/worker/index.js"
+    "start:worker": "node dist/src/worker/index.js",
+    "bench:bulk": "ts-node scripts/benchmark/bulkMove.ts",
+    "bench:interactive": "ts-node scripts/benchmark/interactiveLoad.ts",
+    "bench:kill": "ts-node scripts/benchmark/killResume.ts",
+    "bench:report": "ts-node scripts/benchmark/report.ts",
+    "bench:all": "npm run bench:bulk && npm run bench:interactive && npm run bench:kill && npm run bench:report"
   },
   "license": "UNLICENSED",
   "description": "GoHighLevel SDE-3 take-home: resumable, idempotent bulk pipeline-stage move",

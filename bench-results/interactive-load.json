@@ -1,0 +1,188 @@
+{
+  "name": "interactive-load",
+  "generatedAt": "2026-09-30T12:20:04.025Z",
+  "hardware": {
+    "platform": "win32",
+    "release": "10.0.26200",
+    "arch": "x64",
+    "cpuModel": "AMD Ryzen 7 7435HS",
+    "cpuCount": 16,
+    "totalMemGiB": 15.8,
+    "nodeVersion": "v22.15.0"
+  },
+  "config": {
+    "ratePerSecond": 20,
+    "baselineMs": 6000,
+    "withJobMs": 6000,
+    "mix": "50% list, 25% create, 25% move",
+    "openLoop": true
+  },
+  "job": {
+    "jobId": "e9393204-9ff7-4901-8bee-c28eb7cb9a0e",
+    "itemCount": 50000,
+    "doneAtEndOfPrimaryWindow": 34500,
+    "stillRunningAfterPrimaryWindow": true
+  },
+  "scenarios": [
+    {
+      "label": "baseline",
+      "workspace": "same workspace as job",
+      "bulkJobRunning": false,
+      "durationMs": 6003,
+      "errors": 0,
+      "count": 120,
+      "p50": 7.05,
+      "p95": 11.79,
+      "p99": 29,
+      "maxMs": 47.84,
+      "byKind": {
+        "list": {
+          "count": 60,
+          "p50": 6.11,
+          "p95": 8.13,
+          "p99": 47.84,
+          "maxMs": 47.84
+        },
+        "create": {
+          "count": 30,
+          "p50": 7.33,
+          "p95": 11.95,
+          "p99": 29,
+          "maxMs": 29
+        },
+        "move": {
+          "count": 30,
+          "p50": 10.67,
+          "p95": 15.19,
+          "p99": 17.1,
+          "maxMs": 17.1
+        }
+      }
+    },
+    {
+      "label": "under bulk job",
+      "workspace": "same workspace as job",
+      "bulkJobRunning": true,
+      "durationMs": 6013,
+      "errors": 0,
+      "count": 120,
+      "p50": 8.84,
+      "p95": 20.55,
+      "p99": 45.75,
+      "maxMs": 57.24,
+      "byKind": {
+        "list": {
+          "count": 60,
+          "p50": 6.71,
+          "p95": 12.21,
+          "p99": 24.59,
+          "maxMs": 24.59
+        },
+        "create": {
+          "count": 30,
+          "p50": 8.82,
+          "p95": 21.99,
+          "p99": 45.75,
+          "maxMs": 45.75
+        },
+        "move": {
+          "count": 30,
+          "p50": 13.27,
+          "p95": 24.5,
+          "p99": 57.24,
+          "maxMs": 57.24
+        }
+      }
+    },
+    {
+      "label": "baseline",
+      "workspace": "different workspace",
+      "bulkJobRunning": false,
+      "durationMs": 6004,
+      "errors": 0,
+      "count": 120,
+      "p50": 7.19,
+      "p95": 12.72,
+      "p99": 19.19,
+      "maxMs": 19.34,
+      "byKind": {
+        "list": {
+          "count": 60,
+          "p50": 6.13,
+          "p95": 8.01,
+          "p99": 9.31,
+          "maxMs": 9.31
+        },
+        "create": {
+          "count": 30,
+          "p50": 7.52,
+          "p95": 9.53,
+          "p99": 19.34,
+          "maxMs": 19.34
+        },
+        "move": {
+          "count": 30,
+          "p50": 10.61,
+          "p95": 14.68,
+          "p99": 19.19,
+          "maxMs": 19.19
+        }
+      }
+    },
+    {
+      "label": "under bulk job",
+      "workspace": "different workspace",
+      "bulkJobRunning": true,
+      "durationMs": 2977,
+      "errors": 0,
+      "count": 60,
+      "p50": 8.43,
+      "p95": 16.92,
+      "p99": 24.41,
+      "maxMs": 24.41,
+      "byKind": {
+        "list": {
+          "count": 30,
+          "p50": 6.19,
+          "p95": 13.16,
+          "p99": 15.23,
+          "maxMs": 15.23
+        },
+        "create": {
+          "count": 15,
+          "p50": 8.65,
+          "p95": 17.84,
+          "p99": 17.84,
+          "maxMs": 17.84
+        },
+        "move": {
+          "count": 15,
+          "p50": 11.48,
+          "p95": 24.41,
+          "p99": 24.41,
+          "maxMs": 24.41
+        }
+      }
+    }
+  ],
+  "deltas": [
+    {
+      "workspace": "same workspace as job",
+      "p95BaselineMs": 11.79,
+      "p95UnderJobMs": 20.55,
+      "p95DeltaMs": 8.76,
+      "p99BaselineMs": 29,
+      "p99UnderJobMs": 45.75,
+      "p99DeltaMs": 16.75
+    },
+    {
+      "workspace": "different workspace",
+      "p95BaselineMs": 12.72,
+      "p95UnderJobMs": 16.92,
+      "p95DeltaMs": 4.2,
+      "p99BaselineMs": 19.19,
+      "p99UnderJobMs": 24.41,
+      "p99DeltaMs": 5.22
+    }
+  ]
+}
