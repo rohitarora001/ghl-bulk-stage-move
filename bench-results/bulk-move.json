@@ -1,0 +1,139 @@
+{
+  "name": "bulk-move",
+  "generatedAt": "2026-09-30T12:19:02.249Z",
+  "hardware": {
+    "platform": "win32",
+    "release": "10.0.26200",
+    "arch": "x64",
+    "cpuModel": "AMD Ryzen 7 7435HS",
+    "cpuCount": 16,
+    "totalMemGiB": 15.8,
+    "nodeVersion": "v22.15.0"
+  },
+  "dataset": {
+    "workspaceId": "d3022900-4ed8-49d7-940c-f769a6ac728d",
+    "totalOpportunities": 500000,
+    "sourceStage": {
+      "id": "5464599e-f40d-4a0a-bab7-8b76569e8cad",
+      "name": "New Lead",
+      "count": 109912
+    },
+    "targetStage": {
+      "id": "7fcea786-def9-4083-8111-e97367c4db77",
+      "name": "On Hold",
+      "count": 7483
+    }
+  },
+  "submission": {
+    "stageOnly": {
+      "latencyMs": 1747.47,
+      "totalCount": 50000,
+      "matchedCount": null,
+      "truncated": true
+    },
+    "broad": {
+      "latencyMs": 1600.81,
+      "totalCount": 50000,
+      "matchedCount": null,
+      "truncated": true
+    }
+  },
+  "drain": {
+    "itemCount": 50000,
+    "done": 50000,
+    "skippedConflict": 0,
+    "failed": 0,
+    "wallClockMs": 8964,
+    "itemsPerSecond": 5577.9,
+    "firstThirdItemsPerSecond": 5107,
+    "lastThirdItemsPerSecond": 6362.7,
+    "degradationRatio": 1.25,
+    "buckets": [
+      {
+        "atSeconds": 0.56,
+        "done": 0,
+        "itemsPerSecond": 0
+      },
+      {
+        "atSeconds": 1.09,
+        "done": 1500,
+        "itemsPerSecond": 2853.5
+      },
+      {
+        "atSeconds": 1.62,
+        "done": 4500,
+        "itemsPerSecond": 5701
+      },
+      {
+        "atSeconds": 2.14,
+        "done": 7500,
+        "itemsPerSecond": 5692
+      },
+      {
+        "atSeconds": 2.67,
+        "done": 10500,
+        "itemsPerSecond": 5719
+      },
+      {
+        "atSeconds": 3.21,
+        "done": 13500,
+        "itemsPerSecond": 5569.7
+      },
+      {
+        "atSeconds": 3.73,
+        "done": 17500,
+        "itemsPerSecond": 7706.6
+      },
+      {
+        "atSeconds": 4.25,
+        "done": 21000,
+        "itemsPerSecond": 6671.1
+      },
+      {
+        "atSeconds": 4.77,
+        "done": 24000,
+        "itemsPerSecond": 5792.2
+      },
+      {
+        "atSeconds": 5.31,
+        "done": 27000,
+        "itemsPerSecond": 5532.1
+      },
+      {
+        "atSeconds": 5.85,
+        "done": 30000,
+        "itemsPerSecond": 5597.4
+      },
+      {
+        "atSeconds": 6.36,
+        "done": 34000,
+        "itemsPerSecond": 7718.9
+      },
+      {
+        "atSeconds": 6.88,
+        "done": 37500,
+        "itemsPerSecond": 6818.2
+      },
+      {
+        "atSeconds": 7.39,
+        "done": 40500,
+        "itemsPerSecond": 5848.8
+      },
+      {
+        "atSeconds": 7.91,
+        "done": 43500,
+        "itemsPerSecond": 5791.5
+      },
+      {
+        "atSeconds": 8.44,
+        "done": 46500,
+        "itemsPerSecond": 5636.3
+      },
+      {
+        "atSeconds": 8.96,
+        "done": 50000,
+        "itemsPerSecond": 6684.2
+      }
+    ]
+  }
+}

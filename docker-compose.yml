@@ -1,0 +1,118 @@
+# One command: `docker compose up --build`.
+#
+# Ordering is enforced by health checks and `service_completed_successfully`, not by sleeps.
+# `depends_on` alone only waits for a container to start, and Postgres accepts TCP connections
+# several seconds before it is ready to answer queries — a stack wired that way fails
+# intermittently on a cold machine and works on a warm one, which is the worst kind of flake.
+#
+# Deliberately NO `--abort-on-container-exit`: the `test` service finishing must not tear down
+# `api` and `worker`. The brief is "one command brings up the app AND runs the suite", and a
+# stack that exits the moment the tests pass has only done half of that.
+
+x-app: &app
+  build:
+    context: .
+  environment: &app-env
+    DATABASE_URL_ADMIN: postgresql://postgres:postgres@postgres:5432/ghl
+    DATABASE_URL_INTERACTIVE: postgresql://app_interactive:app_interactive@postgres:5432/ghl?connection_limit=15
+    DATABASE_URL_WORKER: postgresql://app_worker:app_worker@postgres:5432/ghl?connection_limit=3
+    NODE_ENV: development
+
+services:
+  # The application database: migrated, seeded, and served from.
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ghl
+    ports:
+      - '55432:5432'
+    healthcheck:
+      # `-U postgres -d ghl` matters: bare `pg_isready` checks the default database and reports
+      # ready while `ghl` is still being created by the entrypoint.
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d ghl']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  # A second, throwaway database purely for the suite. The tests TRUNCATE every table between
+  # cases, so pointing them at the seeded database would destroy the demo dataset the `api` and
+  # `worker` services are serving from — while those services are running against it.
+  postgres-test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ghl_test
+    ports:
+      - '55433:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d ghl_test']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    # No volume: a test database that survives a restart is a test database with state in it.
+
+  # Roles, then Prisma migrations, then grants — see scripts/migrate.ts for why grants run last
+  # and on every invocation.
+  migrate:
+    <<: *app
+    command: ['npx', 'ts-node', '-r', 'tsconfig-paths/register', 'scripts/migrate.ts']
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  seed:
+    <<: *app
+    # `--reset` so `docker compose up` twice does not stack two demo datasets on top of each
+    # other. Small dataset: the benchmark's 500k rows belong to `npm run seed -- --large`, run
+    # deliberately, not to every `compose up`.
+    command: ['npx', 'ts-node', '-r', 'tsconfig-paths/register', 'scripts/seed.ts', '--reset']
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  api:
+    <<: *app
+    command: ['npx', 'ts-node', '-r', 'tsconfig-paths/register', 'src/app/server.ts']
+    environment:
+      <<: *app-env
+      PORT: '3000'
+    ports:
+      - '3000:3000'
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *app
+    command: ['npx', 'ts-node', '-r', 'tsconfig-paths/register', 'src/app/worker.ts']
+    environment:
+      <<: *app-env
+      # Three loops against a worker pool of three — see src/shared/config.ts, which refuses to
+      # boot if the pool exceeds the connection limit rather than hanging on a starved loop.
+      WORKER_POOL_SIZE: '3'
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+
+  # The suite, against its own database, with its own migrations. Logs stream inline with the
+  # rest of the stack; its exit code is visible in `docker compose ps`.
+  test:
+    <<: *app
+    environment:
+      <<: *app-env
+      DATABASE_URL_ADMIN: postgresql://postgres:postgres@postgres-test:5432/ghl_test
+      DATABASE_URL_INTERACTIVE: postgresql://app_interactive:app_interactive@postgres-test:5432/ghl_test?connection_limit=15
+      DATABASE_URL_WORKER: postgresql://app_worker:app_worker@postgres-test:5432/ghl_test?connection_limit=3
+      CI: 'true'
+    command: ['npx', 'jest', '--runInBand']
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+
+volumes:
+  pgdata:

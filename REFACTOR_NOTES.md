@@ -1,0 +1,552 @@
+# REFACTOR_NOTES.md
+
+Living record of the architectural refactor of `ghl-bulk-stage-move`. Phase 0 is an audit only:
+nothing in `src/`, `prisma/`, or `tests/` changed to produce it.
+
+**Contract for the whole refactor:** zero behavior change. Same routes, same request and response
+shapes, same status codes, same error envelope, same DB schema, same env vars, same worker
+semantics. Structure, naming, layering, and tooling change; observable behavior does not.
+
+---
+
+## 1. Current structure map
+
+```
+src/
+├── api/
+│   ├── index.ts                     entrypoint: listen(), SIGTERM/SIGINT drain
+│   ├── server.ts                    createApp(): json parser, /health, middleware, routers, 404, error handler
+│   ├── errors.ts                    ApiError (status, code, message, details) + badRequest/notFound/conflict
+│   ├── schemas.ts                   every zod schema for both features, one file
+│   ├── middleware/workspaceScope.ts X-Workspace-Id → req.workspaceId (validated against the DB)
+│   ├── routes/jobs.ts               3 routes + header checks + validation + response shaping
+│   ├── routes/opportunities.ts      3 routes + validation + response shaping
+│   └── services/
+│       ├── jobService.ts            290 lines: fingerprint, snapshot CTE, idempotency, raw SQL
+│       ├── opportunityService.ts    create + single move (locked read, version bump, transition)
+│       ├── progressService.ts       progress aggregate + classification
+│       ├── retryService.ts          retry-failed (reset items + job status)
+│       └── stageListService.ts      keyset pagination, raw SQL, MAX_PAGE_SIZE
+├── db/prismaClients.ts              3 lazy Prisma clients (interactive, job, sweep) + disconnectAll
+├── shared/
+│   ├── config.ts                    zod env schema, getConfig()/loadConfig()/resetConfigCache()
+│   └── logger.ts                    dependency-free JSON-lines logger, LOG_LEVEL
+└── worker/
+    ├── index.ts                     runLoop, runSweepLoop, startWorker, entrypoint + shutdown
+    ├── claimAndApplyChunk.ts        claim+apply transaction, isolation pass
+    └── queries.ts                   picker, touchLastProgress, recordChunkFailure, runFinalizeSweep
+scripts/                             migrate, seed, benchmark/ (5 files)
+tests/                               db, part1, part2, integration, unit, setup — 30 suites / 103 tests
+```
+
+No circular imports (verified by reading every relative import in `src/`). Dependency direction is
+already inward-ish: `api/*` → `db`, `shared`; `worker/*` → `db`, `shared`. Nothing imports `api`
+from `worker` or the reverse.
+
+### Request flow, end to end
+
+```
+HTTP → express.json({limit:'1mb'})
+     → [/health short-circuits]
+     → workspaceScope()          header present? uuid-shaped? exists in workspaces? → req.workspaceId
+     → jobsRouter / opportunitiesRouter
+         route handler: reads headers, safeParse(params), safeParse(body), safeParse(query),
+                        calls service, .then(shape response).catch(next)
+     → service: business rules + raw SQL/Prisma calls against a module-level client singleton
+     → 404 catch-all
+     → error handler: ApiError → {error:{code,message,details}}; SyntaxError → 400 invalid_json;
+                      entity.too.large → 413 payload_too_large; anything else → log + 500
+```
+
+### Job flow, end to end
+
+There is **no queue library**. The queue is the `job_items` table; `status` is the cursor.
+
+```
+POST /jobs/bulk-move → jobService.submitBulkMoveJob
+                       → one transaction: insert `jobs` row + snapshot INSERT…SELECT into `job_items`
+worker process (startWorker)
+  ├── N × runLoop(loopId)         pickJobWithClaimableWork → claimAndApplyChunk → touchLastProgress
+  │                               claim = SELECT … FOR UPDATE SKIP LOCKED LIMIT chunkSize
+  │                               apply = same transaction; version check → done | skipped_conflict
+  │                               failure → isolateChunk: re-claim LIMIT 1, one transaction per item
+  └── 1 × runSweepLoop            runFinalizeSweep on its own timer and its own connection
+```
+
+---
+
+## 2. Route inventory
+
+| Method | Path | Current handler | Validation | Service | Statuses |
+|---|---|---|---|---|---|
+| GET | `/health` | `server.ts` inline | none | none | 200 |
+| POST | `/jobs/bulk-move` | `routes/jobs.ts` | `Idempotency-Key` header (present, ≤255), `bulkMoveBodySchema` | `submitBulkMoveJob` | 202, 200 (replay), 400, 409, 413 |
+| GET | `/jobs/:id` | `routes/jobs.ts` | `jobIdParamSchema` | `getJobProgress` | 200, 400, 404 |
+| POST | `/jobs/:id/retry-failed` | `routes/jobs.ts` | `jobIdParamSchema` | `retryFailedItems` | 200, 400, 404 |
+| POST | `/opportunities` | `routes/opportunities.ts` | `createOpportunityBodySchema` | `createOpportunity` | 201, 400, 404 |
+| POST | `/opportunities/:id/move` | `routes/opportunities.ts` | `opportunityIdParamSchema`, `moveOpportunityBodySchema` | `moveOpportunity` | 200, 400, 404, 409 |
+| GET | `/stages/:stageId/opportunities` | `routes/opportunities.ts` | `stageIdParamSchema`, `stageListQuerySchema` | `listStageOpportunities` | 200, 400, 404 |
+| ALL | unmatched | `server.ts` | — | — | 404 `not_found` |
+
+Every route except `/health` sits behind `workspaceScope()`.
+
+## 3. Worker / job inventory
+
+| Unit | Trigger | Concurrency | Entry |
+|---|---|---|---|
+| claim loop | continuous polling; `IDLE_BACKOFF_MS` when nothing claimable | `WORKER_POOL_SIZE` (3) | `runLoop` |
+| chunk apply | inside the claim loop, one transaction per chunk of `CHUNK_SIZE` | per loop | `claimAndApplyChunk` |
+| isolation pass | a chunk apply threw and `claimedCount > 1` | serial, bounded (a 1-item chunk cannot recurse) | `isolateChunk` |
+| finalize sweep | own timer, `SWEEP_INTERVAL_MS` | 1 per process, own `connection_limit=1` client | `runSweepLoop` |
+
+No cron, no external scheduler, no queue broker. A "job name" in this codebase is a `jobs` row, not
+a queue message; the registry in the target layout therefore maps **job kinds** to processors, with
+exactly one kind today (`bulk-stage-move`).
+
+---
+
+## 4. Findings
+
+### 4.1 Business decisions live in route handlers (fat controllers)
+`routes/jobs.ts` owns the `Idempotency-Key` policy: required, ≤255 characters, with the btree
+2704-byte rationale. That is a rule about the request, not HTTP plumbing. The same file decides
+202-vs-200 from `result.created`.
+
+### 4.2 Validation boilerplate duplicated 8 times
+Every handler repeats `const parsed = schema.safeParse(x); if (!parsed.success) { next(ApiError
+.badRequest(code, message, issues)); return; }` — 3 sites in `jobs.ts`, 5 in `opportunities.ts`,
+with five different error codes (`invalid_body`, `invalid_job_id`, `invalid_opportunity_id`,
+`invalid_stage_id`, `invalid_query`). Well past three occurrences: extract a `validate(schema,
+{ source, code, message })` middleware that emits the *same* code per site.
+
+### 4.3 No repository layer — 21 raw SQL / Prisma call sites inside services
+`queryRaw`/`executeRaw` counts: `jobService` 3, `opportunityService` 2, `progressService` 1,
+`retryService` 3, `stageListService` 1, `claimAndApplyChunk` 7, `worker/queries` 4. Business rules
+and SQL share a function body, so no service can be unit-tested without Postgres.
+
+### 4.4 No dependency injection on the API side
+Services `import { interactivePrisma }` at module level. The worker already does better —
+`runLoop(loopId, signal, prisma = jobPrisma)` and every `worker/queries` function takes a client —
+which is exactly why worker tests can drive real loops. The API side gets the same treatment.
+
+### 4.5 God file
+`src/api/services/jobService.ts` is 290 lines and holds: input/result types, request
+fingerprinting, the snapshot CTE, the truncation detector, idempotency replay, the 23505 loser
+path, and cross-pipeline validation. Over the 250-line bar and well over one responsibility.
+
+### 4.6 Magic values
+Item/job status literals (`'pending'`, `'done'`, `'skipped_conflict'`, `'failed'`, `'running'`,
+`'completed'`) appear inline ~20 times across `worker/queries.ts`, `claimAndApplyChunk.ts`,
+`progressService.ts`, `retryService.ts`. Error codes (`invalid_body`, `workspace_required`, …) are
+inline literals at each throw site. `255` lives in `routes/jobs.ts`; `'1mb'` in `server.ts`.
+
+### 4.7 Inconsistent async style and error translation
+Handlers use `.then().catch(next)` promise chains rather than `async/await` behind an
+`asyncHandler` wrapper. Prisma/Postgres error translation (23505 → replay, 54000 → 400) happens
+inside services and routes rather than at a repository boundary.
+
+### 4.8 Configuration read outside `config/`
+`src/db/prismaClients.ts` reads `process.env.PRISMA_LOG`; `src/shared/logger.ts` reads
+`process.env.LOG_LEVEL`. Neither is in the validated schema, so neither crashes fast on a typo.
+
+### 4.9 Tooling gaps
+No ESLint, no Prettier, no import-order rule, no layer-boundary enforcement, no path aliases. The
+`lint` script deliberately does not exist (an earlier decision: aliasing it to a typecheck would be
+dishonest naming). Layer rules that are not machine-checked decay.
+
+### 4.10 Looked for, not found
+- **N+1 queries:** none. Snapshot, claim, progress aggregate, and keyset page are one round trip each.
+- **Circular imports:** none.
+- **Unparameterised SQL:** none — every raw statement binds `$n` placeholders.
+- **Unvalidated input reaching a service:** none.
+
+---
+
+## 5. Suspected bugs (logged, NOT fixed)
+
+Carried forward from the pre-refactor code review plus this audit. The refactor preserves each
+behavior exactly as it is today.
+
+1. **`schemas.ts` date range compares raw ISO strings.** `createdFrom`/`createdTo` refine with `<=`
+   on strings, so a valid range expressed with a non-`Z` offset is rejected 400 and an inverted one
+   is accepted (silently empty result set). Fix would be `Date.parse` inside the refine.
+2. **`schemas.ts` `value` has no scale constraint.** The column is `numeric(14,2)`; `10.555` is
+   accepted, then stored and echoed as `10.56`. Money that quietly changes.
+3. **`config.ts` comment overstates the worst backoff.** Says `2^5s at MAX_ATTEMPTS=5`; a row at
+   `attempts = 5` is terminal, so the worst *served* backoff is `2^3 = 8s`. The conclusion holds;
+   the reasoning misleads whoever next tunes `MAX_ATTEMPTS`.
+4. **`WORKER_POOL_SIZE == connection_limit` is permitted.** Zero headroom in the loops' pool;
+   currently harmless because the sweeper holds its own pool.
+5. **SIGTERM drain can exceed a container grace period.** A loop inside a chunk finishes it before
+   noticing the abort; past a 10s `stop_grace_period` that ends in SIGKILL. Safe (items roll back
+   to `pending`), noisy.
+6. **API shutdown has no forced-exit timer.** `server.close()` waits for idle sockets; a keep-alive
+   client can hold the process past the grace period. `closeAllConnections()` is never called.
+7. **No `unhandledRejection` / `uncaughtException` handlers** in either entrypoint.
+8. ~~**No error-code table in the README**~~ — closed in Phase 5; the table is in README.
+9. **The compose worker never runs its graceful shutdown.** Measured in the Phase 6 end-to-end run,
+   on Linux, which is the first time this path has actually been executed: `podman stop --time 15
+   gohighlevel-worker-1` produced **zero** `worker_shutdown` / `loop_stopped` / `sweeper_stopped`
+   lines and exit code **1**. The command is `['npx', 'ts-node', …]`, so `npx` is PID 1 and SIGTERM
+   kills the Node child without the handler in `app/worker.ts` ever running. Data is unaffected —
+   every item was `done`, nothing in limbo — so this is shutdown noise and a wrong exit code, not
+   correctness. It also settles the open question behind suspected bug 5: the drain is not slow,
+   it simply never starts. Fix would be `exec`-ing node directly (or an init) in the compose
+   command; deliberately not done here, because changing how the process is launched is a
+   behavior change.
+
+## 6. Job idempotency review
+
+| Unit | Idempotent? | Mechanism |
+|---|---|---|
+| bulk-move submission | yes | `(workspace_id, idempotency_key)` unique + `request_fingerprint` 409 |
+| chunk apply | yes | partial unique index on `transitions (job_id, opportunity_id)` makes double-apply structurally impossible; `expected_version` decides `done` vs `skipped_conflict` |
+| isolation pass | yes | same transaction shape, one item at a time |
+| finalize sweep | yes | folded UPDATE guarded by `NOT EXISTS (pending)` plus a `FOR UPDATE SKIP LOCKED` candidate CTE |
+| retry-failed | yes | no failed items ⇒ no `jobs` UPDATE at all |
+
+**Not idempotent, by design:** `job_items.attempts` and `next_attempt_at` advance on every failed
+apply. That is the backoff mechanism, not a defect — named here because a reader auditing "is this
+job idempotent?" deserves the exception stated.
+
+## 7. Security concerns (existing, unchanged by this refactor)
+
+- **No authentication or authorization.** `X-Workspace-Id` is trusted as sent; validating that it
+  exists stops forgery of *nonexistent* tenants, not impersonation of real ones. Every
+  tenant-isolation guarantee is conditional on something in front terminating auth.
+- **No rate limiting.** One caller can submit unlimited 50 000-item jobs.
+- **No `helmet`, no CORS policy.** Adding either changes response headers, i.e. behavior.
+- **Validation errors echo zod `issues`**, exposing internal field names and schema structure.
+  Existing response shape; preserved.
+- Logs carry workspace/job/opportunity ids only — no PII, no request bodies.
+
+---
+
+## 8. Target structure
+
+Adapted to this stack: TypeScript stays TypeScript; there is no queue library, so `shared/queue`
+becomes `shared/worker-runtime` (loop, abortable sleep, backoff policy) and `jobs/registry.ts` maps
+job kind → processor.
+
+```
+src/
+├── app/
+│   ├── createApp.ts          Express factory: middleware order + route wiring, no logic
+│   ├── server.ts             HTTP entrypoint: listen, graceful shutdown
+│   ├── worker.ts             worker entrypoint: loops + sweeper, graceful shutdown
+│   └── container.ts          manual DI: repositories → services → controllers
+├── config/
+│   ├── env.ts                the ONLY reader of process.env (absorbs PRISMA_LOG, LOG_LEVEL)
+│   └── index.ts              typed config object
+├── modules/
+│   ├── bulk-move/            routes/controller/service/repository/schemas/dto/types/errors/constants
+│   │   ├── jobs/             bulk-stage-move.processor.ts (claim+apply), sweep processor
+│   │   └── __tests__/
+│   ├── opportunities/        create + single move + keyset listing
+│   └── workspaces/           workspace lookup behind the scope middleware
+├── shared/
+│   ├── errors/               AppError base, HttpError subclasses, ERROR_CODES
+│   ├── middleware/           requestId, workspaceScope, validate, notFound, errorHandler
+│   ├── http/                 asyncHandler, response helpers, pagination
+│   ├── database/             prisma clients (interactive/job/sweep), withTransaction, PG error codes
+│   ├── worker-runtime/       abortable sleep, loop runner, backoff policy
+│   ├── logger/               existing JSON-lines logger + request/job-scoped context
+│   ├── utils/                pure helpers (canonical JSON, fingerprint)
+│   └── types/                Express augmentation, shared types
+├── jobs/registry.ts          JOB_KIND → processor
+└── index.ts                  thin re-export
+```
+
+### Old → new mapping (parity anchor)
+
+| Current | Target |
+|---|---|
+| `src/api/server.ts` | `src/app/createApp.ts` + `shared/middleware/errorHandler.ts` + `shared/middleware/notFound.ts` |
+| `src/api/index.ts` | `src/app/server.ts` |
+| `src/api/errors.ts` | `shared/errors/` (`AppError`, `BadRequestError`, `NotFoundError`, `ConflictError`) |
+| `src/api/schemas.ts` | split into `modules/bulk-move/bulk-move.schemas.ts` and `modules/opportunities/opportunities.schemas.ts` |
+| `src/api/middleware/workspaceScope.ts` | `shared/middleware/workspaceScope.ts` + `modules/workspaces/workspaces.repository.ts` |
+| `src/api/routes/jobs.ts` | `modules/bulk-move/bulk-move.routes.ts` + `.controller.ts` |
+| `src/api/routes/opportunities.ts` | `modules/opportunities/opportunities.routes.ts` + `.controller.ts` |
+| `src/api/services/jobService.ts` | `modules/bulk-move/bulk-move.service.ts` + `.repository.ts` + `shared/utils/fingerprint.ts` |
+| `src/api/services/progressService.ts` | `modules/bulk-move/bulk-move.service.ts` (progress) + `.repository.ts` |
+| `src/api/services/retryService.ts` | `modules/bulk-move/bulk-move.service.ts` (retry) + `.repository.ts` |
+| `src/api/services/opportunityService.ts` | `modules/opportunities/opportunities.service.ts` + `.repository.ts` |
+| `src/api/services/stageListService.ts` | `modules/opportunities/opportunities.service.ts` (listing) + `.repository.ts` |
+| `src/db/prismaClients.ts` | `shared/database/prismaClients.ts` |
+| `src/shared/config.ts` | `src/config/env.ts` + `src/config/index.ts` |
+| `src/shared/logger.ts` | `shared/logger/` |
+| `src/worker/index.ts` | `src/app/worker.ts` + `shared/worker-runtime/` |
+| `src/worker/claimAndApplyChunk.ts` | `modules/bulk-move/jobs/bulk-stage-move.processor.ts` (+ repository for its SQL) |
+| `src/worker/queries.ts` | `modules/bulk-move/bulk-move.repository.ts` (picker, sweep, failure recording) |
+
+## 9. Migration plan
+
+- **Phase 1 — foundations.** `config/env.ts` (absorbing `PRISMA_LOG`/`LOG_LEVEL` at identical
+  defaults), `shared/errors`, `shared/logger`, `shared/database`, `shared/http/asyncHandler`,
+  `shared/middleware/{validate,errorHandler,notFound,requestId}`, ESLint/Prettier/import-order,
+  path aliases, layer-boundary rule. No route or service touched. Suite stays 103/103.
+- **Phase 2 — reference module: `opportunities`.** Smallest surface exercising all four layers.
+  `git mv` first, then split controller/service/repository, then wire through `container.ts`.
+- **Phase 3 — `bulk-move` (API side) and `workspaces`.** Same pattern, one commit per module.
+- **Phase 4 — worker.** `app/worker.ts`, `shared/worker-runtime`, processor + repository split,
+  `jobs/registry.ts`; graceful shutdown preserved exactly (abort → drain → disconnect).
+- **Phase 5 — tests moved to `modules/*/__tests__`, boundary lint rules, README, dead code.**
+- **Phase 6 — verification.** build + typecheck + lint + 103/103 + route-by-route parity table,
+  plus a `docker compose up` smoke run.
+
+Each phase ends with `npm run build && npm run typecheck && npm run lint && npm test`, all green,
+before the next begins.
+
+## 10. Deliberate deviations (decisions taken without asking)
+
+1. **The refactor lands on a new branch `refactor/modular-architecture`**, cut from
+   `feat/bulk-stage-move`. That branch is a finished take-home whose merge decision is still open;
+   a structural rewrite must not overwrite the artifact being graded.
+2. **No `helmet`, no `cors`, no rate limiter.** All three change response headers or add 429s —
+   observable behavior, which the contract forbids. Listed as follow-ups instead.
+3. **No `pino`/`winston`.** `shared/logger` is already structured JSON-lines with a level filter
+   and zero dependencies; swapping it changes log shape, which is behavior for anyone parsing it.
+4. **New dev dependencies, justified:** `eslint`, `@typescript-eslint/*`, `prettier`,
+   `eslint-plugin-import`, `eslint-config-prettier`. They are the mechanism the brief asks for to
+   enforce layer boundaries and import order; without them the layer rules are prose. Boundary
+   enforcement uses `import/no-restricted-paths` rather than adding `dependency-cruiser` as a
+   second toolchain.
+5. **`npm run lint` now exists** — reversing the earlier "no lint script" decision, which was
+   justified only while no linter was configured.
+6. **`/ready` will be added; `/health` will not change.** The brief asks for both. A new route is
+   additive: no existing request changes shape, and the catch-all 404 for `/ready` was never an
+   asserted behavior.
+7. **`jobs/registry.ts` ships with a single entry.** Near-over-abstraction today; kept because the
+   brief names it and because it is where a second job kind lands.
+8. **Prisma clients stay lazy `Proxy` wrappers.** Importing a module must not open a connection —
+   the unit tests depend on that.
+9. **`docker-compose.yml`, `Dockerfile`, and `package.json` script paths get updated** to the new
+   entrypoints. Configuration following a file move, not behavior change; the commands
+   (`npm run dev`, `docker compose up`) keep their names and effects.
+10. **`DESIGN.md` and `BENCHMARKS.md` keep their measurements**; the file paths named inside them
+    are updated in Phase 5 so the documents do not point at moved files.
+11. **Path aliases need two runtime loaders, so both are dev dependencies.** `tsconfig-paths`
+    resolves `@shared/*` under `ts-node` (dev, scripts, compose, and the two tests that spawn a
+    real process), and `tsc-alias` rewrites the aliases to relative paths in `dist/` so the
+    compiled entrypoints need no loader at all. Without the first, a spawned worker dies on its
+    first import — which is exactly how `killResume.test.ts` caught it.
+12. **`statusCode` is the single name for an error's HTTP status.** The old `ApiError` exposed
+    `status`. Two service-level test assertions named that field and were updated
+    (`collision.test.ts:118,137`); no HTTP response changed, and the wire is still covered by the
+    supertest suites. An alias getter was rejected: two names for one value is how the next
+    reader ends up checking the wrong one.
+13. **`requestId()` sets no response header.** Correlation ids go to logs only. Echoing
+    `X-Request-Id` back would change what every endpoint returns.
+
+## Phase 1 — foundations (complete)
+
+Landed, suite 103/103 green, `build`, `typecheck` and `lint` all clean:
+
+- `src/config/` is now the only reader of `process.env`. `LOG_LEVEL` and `PRISMA_LOG` were
+  absorbed from `logger.ts` and `prismaClients.ts`, but **leniently**: they change how the process
+  talks, not what it does, so a typo must not stop a worker from draining a job. They also stay
+  uncached, because the suite flips `LOG_LEVEL` between cases.
+- `shared/errors/`: `AppError` (statusCode, code, message, details, isOperational) with
+  `BadRequest`, `Unauthorized`, `Forbidden`, `NotFound`, `Conflict`, `PayloadTooLarge` subclasses,
+  plus `ERROR_CODE` — all 22 error codes the API can answer with, previously inline literals.
+  `src/api/errors.ts` is now a three-function shim returning those classes, deleted in Phase 3.
+- `shared/database/`: the three lazy clients moved here, plus `withTransaction` and the Postgres/
+  Prisma error codes (`23505`, `42501`, `54000`, `57014`, `P2002`, `P2025`) named once.
+- `shared/middleware/`: `errorHandler` (the only place an error becomes a response),
+  `notFound`, `requestId`, and `validate`/`validated` — the middleware that replaces the 8
+  duplicated `safeParse` blocks in Phase 2 and 3.
+- `shared/http/asyncHandler`, `shared/logger/` (now with `withContext` for correlation),
+  `shared/types/express.d.ts`.
+- Tooling: ESLint 9 flat config with import ordering, `import/no-cycle`, and
+  `import/no-restricted-paths` encoding the layer rules; per-layer `no-restricted-imports` so a
+  `*.service.ts` cannot import Prisma or Express and a `*.controller.ts` cannot import a
+  repository. Prettier, path aliases, and `lint`/`lint:fix`/`format`/`format:check`/`start`
+  scripts.
+- `docker-compose.yml` service commands gained `-r tsconfig-paths/register` (deviation 11).
+
+`createApp()` already uses the new `requestId`/`notFound`/`errorHandler`; response bytes are
+unchanged, which the untouched supertest suites prove.
+
+## Phase 2 — `opportunities`, the reference module (complete)
+
+Suite 114/114 (103 existing, unchanged in intent, plus 11 new service unit tests), `build`,
+`typecheck` and `lint` clean.
+
+`src/api/services/opportunityService.ts`, `src/api/services/stageListService.ts` and
+`src/api/routes/opportunities.ts` became `src/modules/opportunities/`:
+
+| File | Holds |
+|---|---|
+| `opportunities.routes.ts` | three paths, their validation middleware, controller binding |
+| `opportunities.controller.ts` | validated input → service call → status + JSON |
+| `opportunities.service.ts` | the rules, and the transaction boundary |
+| `opportunities.repository.ts` | every Prisma call and the raw SQL, plus row mapping |
+| `opportunities.schemas.ts` / `.types.ts` / `.errors.ts` / `.constants.ts` | request shapes, domain types, six named domain errors, page-size and status constants |
+
+- **The eight `safeParse` blocks are gone from this module**: routes declare
+  `validate(schema, source, { code, message, withDetails })`, and the id schemas keep answering
+  without `details` exactly as before.
+- **Six domain errors replace inline code+message pairs** (`InvalidStageError`,
+  `OpportunityNotFoundError`, `InvalidTargetStageError`, `VersionConflictError`,
+  `StageNotFoundError`, `InvalidCursorError`) — every string preserved to the character, including
+  the curly apostrophe in the target-stage message.
+- **`src/app/container.ts`** wires repository → service → controller. One instance per process, as
+  before, but assembled in one visible place.
+- **The cursor codec moved to `shared/http/pagination.ts`** as `encodeCursor`/`decodeCursor` with a
+  caller-supplied type guard, so the "what is a valid cursor" rule stays in the module.
+
+Two things worth recording:
+
+1. **The layer lint caught a real violation in my own code.** `opportunities.service.ts` imported
+   `type { Opportunity }` from `@prisma/client`. The fix is the architecture's own answer: the
+   module re-exports the row as `OpportunityRecord` from `opportunities.types.ts`, so nothing above
+   the repository names Prisma. It is deliberately the generated type, not a hand-written copy — a
+   parallel interface that drifted by a field would silently change the response body.
+2. **Three tests moved from importing a function to importing the container**
+   (`collision`, `retryFailed`, `snapshot` called `moveOpportunity` directly). Same assertions,
+   same behavior under test; only the call site moved.
+
+## Phase 3 — `bulk-move` and `workspaces` (complete)
+
+Suite 129/129 (103 original + 11 opportunities + 15 bulk-move unit tests), `build`, `typecheck`
+and `lint` clean. **`src/api/` no longer exists.**
+
+`jobService.ts` (the 290-line god file), `progressService.ts`, `retryService.ts`,
+`routes/jobs.ts`, `schemas.ts`, `errors.ts`, `server.ts` and `middleware/workspaceScope.ts` became:
+
+| New location | Holds |
+|---|---|
+| `modules/bulk-move/bulk-move.routes.ts` | three paths, their middleware, controller binding |
+| `…/bulk-move.middleware.ts` | the `Idempotency-Key` policy — validation, so it runs before the route |
+| `…/bulk-move.controller.ts` | validated input → service → 202/200/200 |
+| `…/bulk-move.service.ts` | submission rules, replay/409 decision, the progress classification |
+| `…/bulk-move.repository.ts` | the snapshot CTE, the progress aggregate, the retry transaction, the filter predicates |
+| `…/bulk-move.{schemas,types,errors,constants}.ts` | request shapes, domain types, seven domain errors, status/limit constants |
+| `modules/workspaces/workspaces.repository.ts` | the one question anything asks: does this workspace exist |
+| `shared/middleware/workspaceScope.ts` | the tenant scope, with the existence check **injected** |
+| `shared/utils/fingerprint.ts` | canonical-JSON SHA-256, now feature-agnostic |
+| `app/createApp.ts`, `app/server.ts` | the Express factory and the HTTP entrypoint |
+
+Decisions worth recording:
+
+1. **`workspaceScope` keeps its place in `shared/middleware` by inverting the dependency.** The
+   layer rule forbids `shared/` importing a feature module, and the middleware needed a workspace
+   lookup. It now takes `{ workspaceExists }` from the composition root, so the cross-cutting
+   concern stays cross-cutting and the SQL stays in the module that owns the table.
+2. **`createApp(dependencies = container)`** takes its container as a defaulted parameter, so a
+   test can build an app over fakes without touching the process-wide wiring.
+3. **The `Idempotency-Key` rules are middleware, not controller code.** They are validation, and
+   they have to run before the snapshot query — a key too long for its btree index fails at write
+   time as a 500 for what is plainly the caller's input.
+4. **Express request augmentation is consolidated** into `shared/types/express.d.ts`
+   (`id`, `workspaceId`, `idempotencyKey`, `validated`), each field naming the middleware that
+   writes it. Two modules had been declaring their own `declare global` blocks.
+5. **`fingerprintRequest(filter, targetStageId)` became `fingerprint(value)`.** Same canonical-JSON
+   SHA-256 over the same `{ filter, targetStageId }` object, so existing stored fingerprints still
+   match; the helper simply no longer knows what a filter is.
+
+Entrypoint paths moved with the code: `package.json` (`main`, `dev:api`, `start`, `start:api`) and
+the compose `api` service now name `src/app/server.ts` / `dist/src/app/server.js`.
+
+## 11. Follow-ups (out of scope here)
+
+Authentication and authorization; rate limiting; `helmet`/CORS; job cancellation; retention policy
+for `job_items` and `transitions`; per-tenant fairness in the picker; the eight suspected bugs
+above; an error-code table in the README.
+
+## Phase 5 — docs, dead code, conventions (complete)
+
+- **README rewritten** around the architecture: a mermaid diagram of the layers, a "where things
+  live" table answering the new-joiner questions, the layer rules with the lint rule that enforces
+  each, the request lifecycle, the job lifecycle, a step-by-step recipe for adding a module, the
+  conventions, and **an error-code table** — which closes suspected bug M6.
+- **Stale paths fixed** in README and DESIGN.md: every `src/api/...`, `src/worker/...`,
+  `src/db/...` and `src/shared/config.ts` reference now names the file that exists. Test counts
+  updated to 32 suites / 129 tests.
+- **Dead code removed**: `logger.withContext` (added in Phase 1, never used), `JOB_ITEM_STATUS`
+  (the SQL names those values inline), and the `UnauthorizedError` / `ForbiddenError` classes —
+  there is no authentication in scope, so nothing could throw them. `PayloadTooLargeError` was
+  kept and put to work in `errorHandler` instead of a bare `res.status(413)`.
+
+**Deliberate deviation 14: the Postgres-backed tests stay under `tests/`.** The brief asks for
+tests colocated in `modules/*/__tests__/`, and the service unit tests are. The rest need a real
+database, a migrated schema and a truncate between cases; they are integration tests by any
+reading, and the target structure's own `tests/ e2e / integration` is where they belong. Moving 30
+files that all pass would have been churn with a real chance of breaking the one suite that proves
+a killed worker resumes.
+
+## Defect found by the end-to-end run, and fixed
+
+**The API container would not start.** `ts-node` compiles only what the entrypoint imports, so
+`src/shared/types/express.d.ts` — an ambient declaration nothing imports — was invisible to it, and
+`requestId()`'s `req.id` failed to compile:
+
+```
+TSError: Unable to compile TypeScript:
+src/shared/middleware/requestId.ts(20,9): error TS2339:
+  Property 'id' does not exist on type 'Request<...>'
+```
+
+Every local gate stayed green because `tsc -p tsconfig.json` and ts-jest both read the `include`
+list, and the worker never touches a request. Only starting the real container caught it — which is
+the argument for running the stack rather than trusting a green suite.
+
+Fixed with `"ts-node": { "files": true }` in `tsconfig.json`, so ts-node reads the same `include`
+list as everything else. Introduced in Phase 1 with `requestId`; caught in Phase 6.
+
+## Phase 6 — verification
+
+`npm run build`, `npm run typecheck`, `npm run lint` and `npm test` all clean at every phase
+boundary, and again at the end: **32 suites / 129 tests**.
+
+## Phase 6 — end-to-end run against the real stack
+
+`podman compose up --build` (podman, not docker — see the deviations), then live HTTP against the
+running containers. Everything below was executed, not reasoned about.
+
+| Check | Result |
+|---|---|
+| stack boots | `postgres`, `postgres-test` healthy; `migrate` and `seed` exit 0; `api` listening; worker logs 3 `loop_started` + `sweeper_started` |
+| compose suite | **32 suites / 129 tests passed** in-container, 55s; `api` and `worker` still up afterwards |
+| submit bulk move | `202` `{jobId, totalCount: 289, matchedCount: 289, truncated: false}` |
+| replay same key | `200`, same `jobId`, nothing enrolled twice |
+| same key, different filter | `409 idempotency_key_conflict` |
+| job drains | `completed`, `done: 289`, `pending/skippedConflict/failed: 0` |
+| rows actually moved | target stage 667 → 956; 289 transitions written for the job |
+| create opportunity | `201`, version 1, `value: 1234.56` round-tripped |
+| manual move | `200`, version 2 |
+| stale `expectedVersion` | `409 version_conflict` with `{expectedVersion: 1, currentVersion: 2}` |
+| keyset page | 2 items + opaque `nextCursor` |
+| error taxonomy | all 13 probes returned the README's code and status, live |
+| kill the worker | no limbo: every item `done` or `pending`, never half-applied |
+| restart the worker | job reaches `completed`; transitions == done items (956 == 956), so nothing applied twice |
+| SIGTERM drain | **found a pre-existing defect** — see suspected bug 9 |
+
+## 12. Parity checklist
+
+Every route and job traced from its original file to its new home. The "verified by" column names
+the test that exercises it end to end — all of them are the pre-refactor tests, unchanged in
+intent, which is what makes them evidence rather than decoration.
+
+| Route / job | Original location | New location | Verified by |
+|---|---|---|---|
+| GET `/health` | `api/server.ts` | `app/createApp.ts` | `tests/part2/submission.test.ts` (app boot) |
+| POST `/jobs/bulk-move` | `api/routes/jobs.ts` | `modules/bulk-move/bulk-move.routes.ts` → `.controller.ts` → `.service.ts` → `.repository.ts` | `submission`, `truncation`, `idempotency`, `idempotencyKeyRace`, `requestHardening` |
+| GET `/jobs/:id` | `api/routes/jobs.ts` | same module, `controller.progress` | `progress`, `isolation` |
+| POST `/jobs/:id/retry-failed` | `api/routes/jobs.ts` | same module, `controller.retryFailed` | `retryFailed`, `isolation` |
+| POST `/opportunities` | `api/routes/opportunities.ts` | `modules/opportunities/opportunities.routes.ts` | `part1/opportunities`, `crossPipelineStage` |
+| POST `/opportunities/:id/move` | `api/routes/opportunities.ts` | same module, `controller.move` | `part1/opportunities`, `collision`, `crossTenantStage` |
+| GET `/stages/:stageId/opportunities` | `api/routes/opportunities.ts` | same module, `controller.listByStage` | `part1/opportunities` (keyset + ties) |
+| `X-Workspace-Id` scope | `api/middleware/workspaceScope.ts` | `shared/middleware/workspaceScope.ts` + `modules/workspaces` | `isolation`, `submission` |
+| 404 catch-all | `api/server.ts` | `shared/middleware/notFound.ts` | `requestHardening` |
+| error envelope | `api/server.ts` | `shared/middleware/errorHandler.ts` | `requestHardening` (400/413/409), every 4xx test |
+| `Idempotency-Key` policy | `api/routes/jobs.ts` | `modules/bulk-move/bulk-move.middleware.ts` | `requestHardening`, `submission` |
+| claim loop | `worker/index.ts` `runLoop` | `app/worker.ts` `runLoop` → `jobs/bulk-stage-move.processor.ts` | `concurrentLoops`, `picker`, `killResume` |
+| chunk claim + apply | `worker/claimAndApplyChunk.ts` | `modules/bulk-move/bulk-move.worker.service.ts` `processChunk` | `chunk`, `alreadyAtTarget`, `collision`, `snapshot`, `resume` |
+| isolation pass | same file, `isolateChunk` | same service, private `isolateChunk` | `poisonIsolation`, `poisonChunk` |
+| failure backoff | `worker/queries.ts` `recordChunkFailure` | `bulk-move.worker.repository.ts` | `poisonChunk`, `retryFailed` |
+| job picker | `worker/queries.ts` | `bulk-move.worker.repository.ts` | `picker` |
+| finalize sweep | `worker/queries.ts` + `runSweepLoop` | `jobs/finalize-sweep.processor.ts` + repository | `drainedJobFinalizes`, `finalizeRace`, `sweepIndependence` |
+| claim index plan | — | unchanged SQL, same index | `claimPlan` (reads EXPLAIN) |
+| config + pool caps | `shared/config.ts`, `db/prismaClients.ts` | `config/env.ts`, `shared/database/` | `unit/config`, `db/roles` |

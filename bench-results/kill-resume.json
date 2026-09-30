@@ -1,0 +1,41 @@
+{
+  "name": "kill-resume",
+  "generatedAt": "2026-09-30T12:20:33.247Z",
+  "hardware": {
+    "platform": "win32",
+    "release": "10.0.26200",
+    "arch": "x64",
+    "cpuModel": "AMD Ryzen 7 7435HS",
+    "cpuCount": 16,
+    "totalMemGiB": 15.8,
+    "nodeVersion": "v22.15.0"
+  },
+  "job": {
+    "jobId": "f91ebb48-ad81-4bba-aca5-bacdf0b43e39",
+    "itemCount": 50000,
+    "sourceStage": "Qualified",
+    "targetStage": "Contract Sent"
+  },
+  "timeline": {
+    "toKillMs": 3310,
+    "doneAtKill": 16500,
+    "doneAfterRollback": 16500,
+    "rolledBackItems": 0,
+    "pendingAfterKill": 33500,
+    "killToCompletionMs": 5996,
+    "totalWallClockMs": 10339
+  },
+  "correctness": {
+    "duplicateApplies": 0,
+    "droppedItems": 0,
+    "transitionsWritten": 50000,
+    "finalCounts": {
+      "done": 50000,
+      "pending": 0,
+      "skippedConflict": 0,
+      "failed": 0
+    },
+    "finalStatus": "completed",
+    "finalClassification": "completed"
+  }
+}
