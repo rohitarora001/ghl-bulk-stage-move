@@ -89,7 +89,7 @@ services:
 
   worker:
     <<: *app
-    command: ['npx', 'ts-node', '-r', 'tsconfig-paths/register', 'src/worker/index.ts']
+    command: ['npx', 'ts-node', '-r', 'tsconfig-paths/register', 'src/app/worker.ts']
     environment:
       <<: *app-env
       # Three loops against a worker pool of three — see src/shared/config.ts, which refuses to

@@ -1,6 +1,4 @@
 import { resetConfigCache } from '@config';
-import { claimAndApplyChunk } from '../../src/worker/claimAndApplyChunk';
-import { runFinalizeSweep } from '../../src/worker/queries';
 import { enrollFreshOpportunities } from '../setup/jobFixtures';
 import {
   adminPrisma,
@@ -9,6 +7,7 @@ import {
   resetDb,
   type WorkspaceFixture,
 } from '../setup/testDb';
+import { workerFor } from '../setup/workerFixtures';
 
 /**
  * `job_items.status` IS the cursor. There is no separate persisted offset to go stale, so a worker
@@ -45,8 +44,8 @@ describe('resuming a partially drained job', () => {
     const job = await enrollFreshOpportunities(fixture, TOTAL);
 
     // Two chunks, then the process "dies".
-    await claimAndApplyChunk(adminPrisma, job.jobId);
-    await claimAndApplyChunk(adminPrisma, job.jobId);
+    await workerFor(adminPrisma).processChunk(job.jobId);
+    await workerFor(adminPrisma).processChunk(job.jobId);
 
     const midway = await adminPrisma.jobItem.groupBy({
       by: ['status'],
@@ -63,7 +62,7 @@ describe('resuming a partially drained job', () => {
     // A fresh worker starts with no memory of the dead one and drains the rest.
     let guard = 0;
     for (;;) {
-      const result = await claimAndApplyChunk(adminPrisma, job.jobId);
+      const result = await workerFor(adminPrisma).processChunk(job.jobId);
       expect(result.outcome).toBe('applied');
       if (result.outcome === 'applied' && result.claimedCount === 0) break;
       guard += 1;
@@ -88,7 +87,7 @@ describe('resuming a partially drained job', () => {
     expect(transitions).toHaveLength(TOTAL);
     expect(new Set(transitions.map((row) => row.opportunityId)).size).toBe(TOTAL);
 
-    await runFinalizeSweep(adminPrisma);
+    await workerFor(adminPrisma).finalizeDrainedJobs();
     expect((await adminPrisma.job.findUniqueOrThrow({ where: { id: job.jobId } })).status).toBe(
       'completed',
     );
@@ -96,8 +95,8 @@ describe('resuming a partially drained job', () => {
 
   it('is a no-op when a worker comes back to an already finished job', async () => {
     const job = await enrollFreshOpportunities(fixture, CHUNK_SIZE);
-    await claimAndApplyChunk(adminPrisma, job.jobId);
-    await runFinalizeSweep(adminPrisma);
+    await workerFor(adminPrisma).processChunk(job.jobId);
+    await workerFor(adminPrisma).finalizeDrainedJobs();
 
     const before = await adminPrisma.opportunity.findMany({
       where: { id: { in: job.opportunityIds } },
@@ -105,7 +104,7 @@ describe('resuming a partially drained job', () => {
     });
 
     // A loop that was mid-flight when the job finished, arriving late.
-    const late = await claimAndApplyChunk(adminPrisma, job.jobId);
+    const late = await workerFor(adminPrisma).processChunk(job.jobId);
 
     expect(late).toMatchObject({ outcome: 'applied', claimedCount: 0 });
     const after = await adminPrisma.opportunity.findMany({

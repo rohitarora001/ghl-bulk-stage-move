@@ -18,6 +18,7 @@
     "paths": {
       "@app/*": ["src/app/*"],
       "@config": ["src/config/index.ts"],
+      "@jobs/*": ["src/jobs/*"],
       "@config/*": ["src/config/*"],
       "@modules/*": ["src/modules/*"],
       "@shared/*": ["src/shared/*"]

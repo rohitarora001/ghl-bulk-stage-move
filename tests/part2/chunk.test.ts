@@ -1,4 +1,3 @@
-import { claimAndApplyChunk } from '../../src/worker/claimAndApplyChunk';
 import { enrollFreshOpportunities } from '../setup/jobFixtures';
 import {
   adminPrisma,
@@ -7,6 +6,7 @@ import {
   resetDb,
   type WorkspaceFixture,
 } from '../setup/testDb';
+import { workerFor } from '../setup/workerFixtures';
 
 /**
  * One chunk is one transaction. The claim and the apply cannot be split: releasing the row locks
@@ -29,7 +29,7 @@ describe('claimAndApplyChunk', () => {
   it('moves every claimed opportunity and records exactly one transition each', async () => {
     const job = await enrollFreshOpportunities(fixture, 5);
 
-    const result = await claimAndApplyChunk(adminPrisma, job.jobId);
+    const result = await workerFor(adminPrisma).processChunk(job.jobId);
 
     expect(result).toMatchObject({
       outcome: 'applied',
@@ -65,7 +65,7 @@ describe('claimAndApplyChunk', () => {
   it('reports having claimed nothing when the job has no claimable items', async () => {
     const job = await enrollFreshOpportunities(fixture, 0);
 
-    const result = await claimAndApplyChunk(adminPrisma, job.jobId);
+    const result = await workerFor(adminPrisma).processChunk(job.jobId);
 
     expect(result).toMatchObject({ outcome: 'applied', claimedCount: 0 });
     expect(await adminPrisma.transition.count()).toBe(0);
@@ -74,9 +74,9 @@ describe('claimAndApplyChunk', () => {
   it('advances the job through several chunks without ever redoing an item', async () => {
     const job = await enrollFreshOpportunities(fixture, 7);
 
-    await claimAndApplyChunk(adminPrisma, job.jobId);
+    await workerFor(adminPrisma).processChunk(job.jobId);
     // The second call has nothing left to claim, because status IS the cursor.
-    const second = await claimAndApplyChunk(adminPrisma, job.jobId);
+    const second = await workerFor(adminPrisma).processChunk(job.jobId);
 
     expect(second).toMatchObject({ outcome: 'applied', claimedCount: 0 });
     // Still one transition per opportunity, not two: the second pass claimed nothing at all.

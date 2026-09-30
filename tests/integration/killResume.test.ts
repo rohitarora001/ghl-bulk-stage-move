@@ -32,7 +32,7 @@ const KILL_AFTER_DONE = TOTAL / 5;
 
 jest.setTimeout(180_000);
 
-const WORKER_ENTRYPOINT = path.join(process.cwd(), 'src', 'worker', 'index.ts');
+const WORKER_ENTRYPOINT = path.join(process.cwd(), 'src', 'app', 'worker.ts');
 
 interface SpawnedWorker {
   child: ChildProcess;

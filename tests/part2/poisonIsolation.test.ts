@@ -1,5 +1,4 @@
 import { resetConfigCache } from '@config';
-import { claimAndApplyChunk } from '../../src/worker/claimAndApplyChunk';
 import { enrollFreshOpportunities } from '../setup/jobFixtures';
 import {
   adminPrisma,
@@ -8,6 +7,7 @@ import {
   resetDb,
   type WorkspaceFixture,
 } from '../setup/testDb';
+import { workerFor } from '../setup/workerFixtures';
 
 /**
  * One bad row must cost one row.
@@ -73,7 +73,7 @@ describe('a chunk with one poisoned row', () => {
     await poison(job.jobId, poisonedId, fixture, job.targetStageId);
     const before = new Date();
 
-    await claimAndApplyChunk(adminPrisma, job.jobId);
+    await workerFor(adminPrisma).processChunk(job.jobId);
 
     const healthy = await adminPrisma.opportunity.findMany({ where: { id: { in: healthyIds } } });
     expect(healthy).toHaveLength(CHUNK_SIZE - 1);
@@ -107,7 +107,7 @@ describe('a chunk with one poisoned row', () => {
     const job = await enrollFreshOpportunities(fixture, CHUNK_SIZE);
     await poison(job.jobId, job.opportunityIds[1]!, fixture, job.targetStageId);
 
-    const result = await claimAndApplyChunk(adminPrisma, job.jobId);
+    const result = await workerFor(adminPrisma).processChunk(job.jobId);
 
     // `apply-error` and not `applied`: something in this chunk genuinely did not apply, and a
     // caller told otherwise would treat a poisoned job as a healthy one.

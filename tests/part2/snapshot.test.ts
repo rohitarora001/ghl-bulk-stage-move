@@ -1,7 +1,6 @@
 import request from 'supertest';
 import { container } from '@app/container';
 import { createApp } from '@app/createApp';
-import { claimAndApplyChunk } from '../../src/worker/claimAndApplyChunk';
 import {
   adminPrisma,
   createOpportunity,
@@ -10,6 +9,7 @@ import {
   resetDb,
   type WorkspaceFixture,
 } from '../setup/testDb';
+import { workerFor } from '../setup/workerFixtures';
 
 /**
  * The filter is stored, never re-evaluated. `job_items` is the guest list, and the guest list is
@@ -25,7 +25,7 @@ const app = createApp();
 
 async function drain(jobId: string): Promise<void> {
   for (let round = 0; round < 50; round += 1) {
-    const result = await claimAndApplyChunk(adminPrisma, jobId);
+    const result = await workerFor(adminPrisma).processChunk(jobId);
     if (result.outcome !== 'applied') throw new Error(`chunk failed: ${JSON.stringify(result)}`);
     if (result.claimedCount === 0) return;
   }

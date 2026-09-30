@@ -1,6 +1,5 @@
 import { container } from '@app/container';
 import { ConflictError } from '@shared/errors';
-import { claimAndApplyChunk } from '../../src/worker/claimAndApplyChunk';
 import { enrollFreshOpportunities } from '../setup/jobFixtures';
 import {
   adminPrisma,
@@ -9,6 +8,7 @@ import {
   resetDb,
   type WorkspaceFixture,
 } from '../setup/testDb';
+import { workerFor } from '../setup/workerFixtures';
 
 /**
  * The collision policy: when a human and a running job both touch the same record, the human wins.
@@ -47,7 +47,7 @@ describe('a manual move racing a running job', () => {
     });
     expect(moved.version).toBe(2);
 
-    const result = await claimAndApplyChunk(adminPrisma, job.jobId);
+    const result = await workerFor(adminPrisma).processChunk(job.jobId);
     expect(result).toMatchObject({ outcome: 'applied', claimedCount: 3, conflictCount: 1 });
 
     const row = await adminPrisma.opportunity.findUniqueOrThrow({ where: { id: collided! } });
@@ -89,7 +89,7 @@ describe('a manual move racing a running job', () => {
       targetStageId: job.targetStageId,
     });
 
-    const result = await claimAndApplyChunk(adminPrisma, job.jobId);
+    const result = await workerFor(adminPrisma).processChunk(job.jobId);
 
     // The outcome the job wanted is already the case, so there is nothing to have conflicted with.
     expect(result).toMatchObject({ outcome: 'applied', doneCount: 1, conflictCount: 0 });

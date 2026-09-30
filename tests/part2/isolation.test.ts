@@ -1,6 +1,5 @@
 import request from 'supertest';
 import { createApp } from '@app/createApp';
-import { claimAndApplyChunk } from '../../src/worker/claimAndApplyChunk';
 import {
   adminPrisma,
   createOpportunity,
@@ -9,6 +8,7 @@ import {
   seedBaseFixture,
   type BaseFixture,
 } from '../setup/testDb';
+import { workerFor } from '../setup/workerFixtures';
 
 /**
  * Tenant isolation, checked against the thing that could actually break it.
@@ -39,7 +39,7 @@ async function snapshotWorkspace(workspaceId: string) {
 
 async function drain(jobId: string): Promise<void> {
   for (let round = 0; round < 50; round += 1) {
-    const result = await claimAndApplyChunk(adminPrisma, jobId);
+    const result = await workerFor(adminPrisma).processChunk(jobId);
     if (result.outcome !== 'applied') throw new Error(`chunk failed: ${JSON.stringify(result)}`);
     if (result.claimedCount === 0) return;
   }
