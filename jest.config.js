@@ -6,4 +6,5 @@ module.exports = {
   testTimeout: 30000,
   // The suite drives one real Postgres; parallel workers would race on TRUNCATE.
   maxWorkers: 1,
+  globalSetup: '<rootDir>/tests/setup/globalSetup.ts',
 };

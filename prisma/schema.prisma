@@ -1,0 +1,116 @@
+// Prisma owns the schema, the migrations, and the simple typed CRUD. The handful of queries
+// Prisma's API cannot express — the `FOR UPDATE SKIP LOCKED` claim, the deterministic
+// `ORDER BY id FOR UPDATE` lock, the snapshot CTE, the finalize sweep — are raw SQL through
+// `$queryRaw`/`$executeRaw`. Table and column names are mapped to snake_case so that raw SQL
+// reads like ordinary Postgres rather than like Prisma's default camelCase quoting.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL_ADMIN")
+}
+
+model Workspace {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  pipelines     Pipeline[]
+  stages        Stage[]
+  opportunities Opportunity[]
+  transitions   Transition[]
+
+  @@map("workspaces")
+}
+
+model Pipeline {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  name        String
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  stages        Stage[]
+  opportunities Opportunity[]
+
+  @@index([workspaceId])
+  @@map("pipelines")
+}
+
+model Stage {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  pipelineId  String   @map("pipeline_id") @db.Uuid
+  name        String
+  position    Int
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  pipeline      Pipeline      @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  opportunities Opportunity[]
+
+  @@unique([pipelineId, position])
+  @@index([workspaceId, pipelineId])
+  @@map("stages")
+}
+
+enum OpportunityStatus {
+  open
+  won
+  lost
+  abandoned
+
+  @@map("opportunity_status")
+}
+
+model Opportunity {
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String            @map("workspace_id") @db.Uuid
+  pipelineId  String            @map("pipeline_id") @db.Uuid
+  stageId     String            @map("stage_id") @db.Uuid
+  name        String
+  value       Decimal           @db.Decimal(14, 2)
+  status      OpportunityStatus @default(open)
+  ownerId     String            @map("owner_id") @db.Uuid
+  /// Bumped on every stage change, by a manual move and by the job alike. The bulk job freezes
+  /// the value it saw at snapshot time in `job_items.expected_version`; a mismatch at apply
+  /// time means a human got there first and the job stands down.
+  version     Int               @default(1)
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime          @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  pipeline    Pipeline     @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  stage       Stage        @relation(fields: [stageId], references: [id])
+  transitions Transition[]
+
+  /// Makes the submission snapshot's filter INSERT...SELECT index-driven against a 500k table.
+  @@index([workspaceId, stageId, ownerId, status, createdAt, value], map: "idx_opportunities_filter")
+  /// Serves Part 1's keyset-paginated stage listing in `(created_at, id)` order.
+  @@index([workspaceId, stageId, createdAt, id], map: "idx_opportunities_stage_list")
+  @@map("opportunities")
+}
+
+model Transition {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  opportunityId String   @map("opportunity_id") @db.Uuid
+  workspaceId   String   @map("workspace_id") @db.Uuid
+  fromStageId   String?  @map("from_stage_id") @db.Uuid
+  toStageId     String   @map("to_stage_id") @db.Uuid
+  /// Null for a manual move. Deliberately NOT a foreign key at this migration — the `jobs`
+  /// table does not exist yet; the constraint is added alongside `jobs` in a later migration.
+  jobId         String?  @map("job_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  /// Needed by the kill-resume double-apply proof; without it that query seq-scans a table that
+  /// grows with every job and every manual move ever made.
+  @@index([jobId])
+  @@index([opportunityId, createdAt])
+  @@map("transitions")
+}
