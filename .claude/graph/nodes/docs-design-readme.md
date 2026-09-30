@@ -74,3 +74,9 @@ Every `src/api/...`, `src/worker/...`, `src/db/...` and `src/shared/config.ts` p
 DESIGN.md was repointed at the file that now exists. Counts read 32 suites / 129 tests.
 
 DESIGN.md keeps every measurement unchanged — only the file paths moved.
+
+## Benchmark claim corrected (commit e1327cb)
+
+DESIGN.md §1 used to say every number in `BENCHMARKS.md` was measured before the claim index was
+added. That stopped being true when the benchmarks were regenerated. It now reports both runs, the
+improvement on the submission path, and why the drain comparison across the two runs does not hold.

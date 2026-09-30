@@ -85,3 +85,28 @@ immediately on a module-not-found. Same change, same reason, in
 `startApi()` and `startWorker()` in `scripts/benchmark/common.ts` spawn `src/app/server.ts` and
 `src/app/worker.ts`. The measured entrypoints are still the shipped ones — that is the property the
 benchmarks exist to preserve.
+
+## Regenerated against the shipped code (commit e1327cb)
+
+**Gotcha that blocked the re-run:** `ghl_dev` was two migrations behind — no
+`jobs.request_fingerprint`, no `job_items_claim_order_idx` — because only `ghl_test` was migrated
+after the review fix pass. Submission failed with a 500 before anything was measured. Benchmarks
+run against their own database, so **migrate `ghl_dev` whenever a migration lands**:
+
+```
+DATABASE_URL_ADMIN=postgresql://postgres:postgres@localhost:55433/ghl_dev npm run migrate
+```
+
+Second run, now with the claim index and the refactored code:
+
+| | pre-refactor | shipped |
+|---|---|---|
+| submission, stage-only filter | 1747 ms | **1219 ms** |
+| drain 50 000 | 8.96s, 6 684 items/sec | 11.26s, 4 440 items/sec |
+| interactive p95, same workspace, idle | 11.79 ms | 39.71 ms |
+| kill/resume | 10.34s, 0 duplicates | 10.54s, 0 duplicates, 0 dropped |
+
+The drain figures are **not comparable across runs**: the idle interactive baseline, which runs no
+worker code at all, also tripled, so the second run's machine was busier. Both are reported as
+measured; neither is tuned. Submission improving is the one signal that is attributable — it is
+the path the new index serves.
