@@ -47,3 +47,12 @@ Consequence to remember: node edits are now part of the diff a reviewer sees, so
 graph update lands in its own commit or in the one it describes — never as an untracked
 side-effect.
 
+## Prettier applied to the source (commit ce92b7a)
+
+`npm run format` had never been run. With the prose documents and `.claude/` excluded via
+`.prettierignore`, it reformatted 21 source files — formatting only, mostly signatures that fit
+inside the 100-char print width being pulled back onto one line. `npm run format:check` passes now;
+before, a documented command failed on its own repository.
+
+Gotcha: the `format` glob covers `**/*.{ts,js,mjs,json,md}`, so anything hand-wrapped **must** be
+listed in `.prettierignore` or the next `format` run will reflow it — the memory graph included.

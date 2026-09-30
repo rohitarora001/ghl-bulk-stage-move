@@ -80,3 +80,20 @@ DESIGN.md keeps every measurement unchanged — only the file paths moved.
 DESIGN.md §1 used to say every number in `BENCHMARKS.md` was measured before the claim index was
 added. That stopped being true when the benchmarks were regenerated. It now reports both runs, the
 improvement on the submission path, and why the drain comparison across the two runs does not hold.
+
+## Doc audit against the shipped code (commit ce92b7a)
+
+Mechanical check: every `src/…`, `scripts/…`, `tests/…` path named in README, DESIGN and
+BENCHMARKS exists, and every `npm run …` they document is a real script. Counts verified: 103
+Postgres tests + 26 service unit tests = 129.
+
+Three gaps closed:
+
+- **DESIGN weak spots** now records the compose shutdown defect — `stop --time 15` gives zero
+  `worker_shutdown` lines and exit code 1, because `npx` is PID 1. See [[module-worker]]. That
+  section is where a reader looks for what is still broken, and the defect was found after it was
+  written.
+- **README** gained the `ghl_dev` migration instruction (see [[module-benchmarks]]) and a **Checks**
+  section — `typecheck`, `lint`, `format`, `build` existed as scripts but appeared in no document.
+- **`.prettierignore` added.** README, DESIGN, REFACTOR_NOTES, BENCHMARKS and `.claude/` are
+  hand-wrapped prose; Prettier reflows them and turns a one-line fix into a whole-file diff.
