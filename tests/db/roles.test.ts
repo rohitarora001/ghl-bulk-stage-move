@@ -1,4 +1,4 @@
-import { disconnectAll, interactivePrisma, jobPrisma } from '../../src/db/prismaClients';
+import { disconnectAll, interactivePrisma, jobPrisma } from '@shared/database';
 import { adminPrisma, disconnectTestDb } from '../setup/testDb';
 
 /** Postgres raises this SQLSTATE when `statement_timeout` cancels a query. */

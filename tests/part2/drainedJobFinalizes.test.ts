@@ -1,6 +1,5 @@
-import { runLoop, runSweepLoop } from '../../src/worker/index';
-import { runFinalizeSweep } from '../../src/worker/queries';
-import { resetConfigCache } from '../../src/shared/config';
+import { resetConfigCache } from '@config';
+import { runLoop, runSweepLoop } from '@app/worker';
 import { enrollFreshOpportunities } from '../setup/jobFixtures';
 import {
   adminPrisma,
@@ -9,6 +8,7 @@ import {
   resetDb,
   type WorkspaceFixture,
 } from '../setup/testDb';
+import { workerFor } from '../setup/workerFixtures';
 
 /**
  * A drained job must reach a terminal status because time passed, not because the worker happened
@@ -81,7 +81,7 @@ describe('a drained job', () => {
     const job = await enrollFreshOpportunities(fixture, 3);
     await adminPrisma.jobItem.updateMany({ where: { jobId: job.jobId }, data: { status: 'done' } });
 
-    const finalized = await runFinalizeSweep(adminPrisma);
+    const finalized = await workerFor(adminPrisma).finalizeDrainedJobs();
 
     expect(finalized).toBe(1);
     expect(await statusOf(job.jobId)).toBe('completed');

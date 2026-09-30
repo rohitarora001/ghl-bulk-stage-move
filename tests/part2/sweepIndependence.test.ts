@@ -1,6 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { runLoop, runSweepLoop } from '../../src/worker/index';
-import { resetConfigCache } from '../../src/shared/config';
+import { resetConfigCache } from '@config';
+import { runLoop, runSweepLoop } from '@app/worker';
 import { enrollFreshOpportunities } from '../setup/jobFixtures';
 import {
   adminPrisma,

@@ -1,4 +1,4 @@
-import { loadConfig } from '../../src/shared/config';
+import { loadConfig } from '@config';
 
 const ADMIN = 'postgresql://postgres:postgres@localhost:55433/ghl_test';
 const INTERACTIVE =

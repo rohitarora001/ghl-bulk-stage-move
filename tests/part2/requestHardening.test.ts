@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import request from 'supertest';
-import { createApp } from '../../src/api/server';
+import { createApp } from '@app/createApp';
 import {
   createOpportunity,
   createWorkspace,

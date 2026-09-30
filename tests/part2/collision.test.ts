@@ -1,6 +1,5 @@
-import { claimAndApplyChunk } from '../../src/worker/claimAndApplyChunk';
-import { moveOpportunity } from '../../src/api/services/opportunityService';
-import { ApiError } from '../../src/api/errors';
+import { container } from '@app/container';
+import { ConflictError } from '@shared/errors';
 import { enrollFreshOpportunities } from '../setup/jobFixtures';
 import {
   adminPrisma,
@@ -9,6 +8,7 @@ import {
   resetDb,
   type WorkspaceFixture,
 } from '../setup/testDb';
+import { workerFor } from '../setup/workerFixtures';
 
 /**
  * The collision policy: when a human and a running job both touch the same record, the human wins.
@@ -40,14 +40,14 @@ describe('a manual move racing a running job', () => {
     const manualTarget = fixture.stageIds[2]!;
 
     // The human gets there first, between the snapshot and the chunk.
-    const moved = await moveOpportunity({
+    const moved = await container.opportunitiesService.moveOpportunity({
       workspaceId: fixture.workspaceId,
       opportunityId: collided!,
       targetStageId: manualTarget,
     });
     expect(moved.version).toBe(2);
 
-    const result = await claimAndApplyChunk(adminPrisma, job.jobId);
+    const result = await workerFor(adminPrisma).processChunk(job.jobId);
     expect(result).toMatchObject({ outcome: 'applied', claimedCount: 3, conflictCount: 1 });
 
     const row = await adminPrisma.opportunity.findUniqueOrThrow({ where: { id: collided! } });
@@ -83,13 +83,13 @@ describe('a manual move racing a running job', () => {
     const job = await enrollFreshOpportunities(fixture, 1);
     const collided = job.opportunityIds[0]!;
 
-    await moveOpportunity({
+    await container.opportunitiesService.moveOpportunity({
       workspaceId: fixture.workspaceId,
       opportunityId: collided,
       targetStageId: job.targetStageId,
     });
 
-    const result = await claimAndApplyChunk(adminPrisma, job.jobId);
+    const result = await workerFor(adminPrisma).processChunk(job.jobId);
 
     // The outcome the job wanted is already the case, so there is nothing to have conflicted with.
     expect(result).toMatchObject({ outcome: 'applied', doneCount: 1, conflictCount: 0 });
@@ -101,22 +101,22 @@ describe('a manual move racing a running job', () => {
   it('rejects a manual move whose expectedVersion is stale', async () => {
     const job = await enrollFreshOpportunities(fixture, 1);
     const target = job.opportunityIds[0]!;
-    await moveOpportunity({
+    await container.opportunitiesService.moveOpportunity({
       workspaceId: fixture.workspaceId,
       opportunityId: target,
       targetStageId: fixture.stageIds[2]!,
     });
 
     // A second client holding the version it read before the first move.
-    const stale = moveOpportunity({
+    const stale = container.opportunitiesService.moveOpportunity({
       workspaceId: fixture.workspaceId,
       opportunityId: target,
       targetStageId: fixture.stageIds[1]!,
       expectedVersion: 1,
     });
 
-    await expect(stale).rejects.toMatchObject({ status: 409 });
-    await expect(stale).rejects.toBeInstanceOf(ApiError);
+    await expect(stale).rejects.toMatchObject({ statusCode: 409 });
+    await expect(stale).rejects.toBeInstanceOf(ConflictError);
     const row = await adminPrisma.opportunity.findUniqueOrThrow({ where: { id: target } });
     expect(row.stageId).toBe(fixture.stageIds[2]);
     expect(row.version).toBe(2);
@@ -126,7 +126,7 @@ describe('a manual move racing a running job', () => {
     const other = await createWorkspace('workspace-b');
     const job = await enrollFreshOpportunities(fixture, 1);
 
-    const crossTenant = moveOpportunity({
+    const crossTenant = container.opportunitiesService.moveOpportunity({
       workspaceId: fixture.workspaceId,
       opportunityId: job.opportunityIds[0]!,
       targetStageId: other.stageIds[0]!,
@@ -134,6 +134,6 @@ describe('a manual move racing a running job', () => {
 
     // Moving a record into another tenant's pipeline stage is a data-isolation breach, not a
     // routine validation miss.
-    await expect(crossTenant).rejects.toMatchObject({ status: 400 });
+    await expect(crossTenant).rejects.toMatchObject({ statusCode: 400 });
   });
 });

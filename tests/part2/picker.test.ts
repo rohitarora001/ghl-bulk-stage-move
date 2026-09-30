@@ -1,4 +1,3 @@
-import { pickJobWithClaimableWork, touchLastProgress } from '../../src/worker/queries';
 import { enrollFreshOpportunities } from '../setup/jobFixtures';
 import {
   adminPrisma,
@@ -7,6 +6,7 @@ import {
   resetDb,
   type WorkspaceFixture,
 } from '../setup/testDb';
+import { workerFor } from '../setup/workerFixtures';
 
 /**
  * The picker decides which job a loop works on, and both halves of it earn their keep.
@@ -60,21 +60,21 @@ describe('pickJobWithClaimableWork', () => {
     });
     await setProgress(claimable.jobId, 1);
 
-    expect(await pickJobWithClaimableWork(adminPrisma)).toBe(claimable.jobId);
+    expect(await workerFor(adminPrisma).pickJob()).toBe(claimable.jobId);
   });
 
   it('returns nothing when every running job is backed off', async () => {
     const job = await enrollFreshOpportunities(fixture, 2);
     await backOff(job.jobId, 3600);
 
-    expect(await pickJobWithClaimableWork(adminPrisma)).toBeNull();
+    expect(await workerFor(adminPrisma).pickJob()).toBeNull();
   });
 
   it('ignores jobs that are no longer running', async () => {
     const job = await enrollFreshOpportunities(fixture, 2);
     await adminPrisma.job.update({ where: { id: job.jobId }, data: { status: 'completed' } });
 
-    expect(await pickJobWithClaimableWork(adminPrisma)).toBeNull();
+    expect(await workerFor(adminPrisma).pickJob()).toBeNull();
   });
 
   it('prefers the job that has waited longest, and rotates as they progress', async () => {
@@ -86,14 +86,14 @@ describe('pickJobWithClaimableWork', () => {
     await setProgress(older.jobId, 30);
     await setProgress(newer.jobId, 5);
 
-    expect(await pickJobWithClaimableWork(adminPrisma)).toBe(older.jobId);
+    expect(await workerFor(adminPrisma).pickJob()).toBe(older.jobId);
 
     // A loop worked it and recorded progress; the other job must now be first in line.
-    await touchLastProgress(adminPrisma, older.jobId);
-    expect(await pickJobWithClaimableWork(adminPrisma)).toBe(newer.jobId);
+    await workerFor(adminPrisma).touchProgress(older.jobId);
+    expect(await workerFor(adminPrisma).pickJob()).toBe(newer.jobId);
 
-    await touchLastProgress(adminPrisma, newer.jobId);
-    expect(await pickJobWithClaimableWork(adminPrisma)).toBe(older.jobId);
+    await workerFor(adminPrisma).touchProgress(newer.jobId);
+    expect(await workerFor(adminPrisma).pickJob()).toBe(older.jobId);
   });
 
   it('puts a job that has never progressed at the front of the queue', async () => {
@@ -106,6 +106,6 @@ describe('pickJobWithClaimableWork', () => {
     await setProgress(brandNew.jobId, null);
 
     // NULLS FIRST: a submitted job must start moving rather than queue behind a long-running one.
-    expect(await pickJobWithClaimableWork(adminPrisma)).toBe(brandNew.jobId);
+    expect(await workerFor(adminPrisma).pickJob()).toBe(brandNew.jobId);
   });
 });

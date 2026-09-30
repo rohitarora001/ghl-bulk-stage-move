@@ -1,7 +1,6 @@
 import request from 'supertest';
-import { createApp } from '../../src/api/server';
-import { moveOpportunity } from '../../src/api/services/opportunityService';
-import { claimAndApplyChunk } from '../../src/worker/claimAndApplyChunk';
+import { container } from '@app/container';
+import { createApp } from '@app/createApp';
 import { enrollFreshOpportunities } from '../setup/jobFixtures';
 import {
   adminPrisma,
@@ -10,6 +9,7 @@ import {
   resetDb,
   type WorkspaceFixture,
 } from '../setup/testDb';
+import { workerFor } from '../setup/workerFixtures';
 
 /**
  * Retry-failed is a replay, not a force. It puts exhausted items back in the queue and lets the
@@ -73,7 +73,7 @@ describe('POST /jobs/:id/retry-failed', () => {
     expect(job2.status).toBe('running');
     expect(job2.errorMessage).toBeNull();
 
-    const result = await claimAndApplyChunk(adminPrisma, job.jobId);
+    const result = await workerFor(adminPrisma).processChunk(job.jobId);
     expect(result).toMatchObject({ outcome: 'applied', claimedCount: 3, doneCount: 3 });
   });
 
@@ -83,14 +83,14 @@ describe('POST /jobs/:id/retry-failed', () => {
 
     // A human moved one of the failed rows somewhere else entirely while the job was stalled.
     const elsewhere = fixture.stageIds[2]!;
-    await moveOpportunity({
+    await container.opportunitiesService.moveOpportunity({
       workspaceId: fixture.workspaceId,
       opportunityId: job.opportunityIds[0]!,
       targetStageId: elsewhere,
     });
 
     await retry(fixture.workspaceId, job.jobId);
-    const result = await claimAndApplyChunk(adminPrisma, job.jobId);
+    const result = await workerFor(adminPrisma).processChunk(job.jobId);
 
     expect(result).toMatchObject({ outcome: 'applied', claimedCount: 3, conflictCount: 1 });
 
@@ -112,7 +112,7 @@ describe('POST /jobs/:id/retry-failed', () => {
     await failEverything(job.jobId);
 
     await retry(fixture.workspaceId, job.jobId);
-    const result = await claimAndApplyChunk(adminPrisma, job.jobId);
+    const result = await workerFor(adminPrisma).processChunk(job.jobId);
     expect(result).toMatchObject({ outcome: 'applied', doneCount: 3 });
 
     // Nothing is failed any more, so the second call has nothing to flip — and must not drag

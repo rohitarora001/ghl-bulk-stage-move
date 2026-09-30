@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { createApp } from '../../src/api/server';
+import { createApp } from '@app/createApp';
 import { enrollFreshOpportunities } from '../setup/jobFixtures';
 import {
   adminPrisma,

@@ -1,6 +1,5 @@
-import { claimAndApplyChunk } from '../../src/worker/claimAndApplyChunk';
-import { runLoop, runSweepLoop } from '../../src/worker/index';
-import { resetConfigCache } from '../../src/shared/config';
+import { resetConfigCache } from '@config';
+import { runLoop, runSweepLoop } from '@app/worker';
 import {
   adminPrisma,
   createWorkspace,
@@ -8,6 +7,7 @@ import {
   resetDb,
   type WorkspaceFixture,
 } from '../setup/testDb';
+import { workerFor } from '../setup/workerFixtures';
 
 /**
  * The proof the whole design rests on.
@@ -182,7 +182,7 @@ describe('three loops draining one job with no manual edits', () => {
     );
     await blocking;
 
-    const chunk = claimAndApplyChunk(adminPrisma, jobId);
+    const chunk = workerFor(adminPrisma).processChunk(jobId);
     await new Promise((resolve) => setTimeout(resolve, 300));
 
     const competing = await adminPrisma.$queryRaw<{ id: bigint }[]>`

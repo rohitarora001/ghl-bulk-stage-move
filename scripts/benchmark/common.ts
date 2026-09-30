@@ -110,11 +110,15 @@ export function startService(
   entrypoint: string,
   env: Record<string, string> = {},
 ): Service {
-  const child = spawn(process.execPath, ['-r', 'ts-node/register', entrypoint], {
-    cwd: process.cwd(),
-    env: { ...process.env, TS_NODE_TRANSPILE_ONLY: 'true', ...env },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const child = spawn(
+    process.execPath,
+    ['-r', 'ts-node/register', '-r', 'tsconfig-paths/register', entrypoint],
+    {
+      cwd: process.cwd(),
+      env: { ...process.env, TS_NODE_TRANSPILE_ONLY: 'true', ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
   const output: string[] = [];
   child.stdout?.on('data', (chunk: Buffer) => output.push(chunk.toString()));
   child.stderr?.on('data', (chunk: Buffer) => output.push(chunk.toString()));
@@ -133,7 +137,7 @@ export function startService(
 }
 
 export async function startApi(): Promise<Service> {
-  const api = startService('api', path.join('src', 'api', 'index.ts'), { PORT: String(API_PORT) });
+  const api = startService('api', path.join('src', 'app', 'server.ts'), { PORT: String(API_PORT) });
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     try {
@@ -151,7 +155,7 @@ export async function startApi(): Promise<Service> {
 }
 
 export function startWorker(env: Record<string, string> = {}): Service {
-  return startService('worker', path.join('src', 'worker', 'index.ts'), {
+  return startService('worker', path.join('src', 'app', 'worker.ts'), {
     WORKER_POOL_SIZE: process.env.BENCH_WORKER_POOL ?? '3',
     ...env,
   });

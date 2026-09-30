@@ -1,5 +1,4 @@
-import { runFinalizeSweep, recordChunkFailure } from '../../src/worker/queries';
-import { resetConfigCache } from '../../src/shared/config';
+import { resetConfigCache } from '@config';
 import { enrollFreshOpportunities } from '../setup/jobFixtures';
 import {
   adminPrisma,
@@ -9,6 +8,7 @@ import {
   resetDb,
   type WorkspaceFixture,
 } from '../setup/testDb';
+import { workerFor } from '../setup/workerFixtures';
 
 /**
  * The sweep decides two things — whether a job is drained, and whether it drained clean — and both
@@ -78,7 +78,7 @@ describe('the finalize sweep racing a concurrent writer', () => {
     });
 
     await lockHeld;
-    const sweep = runFinalizeSweep(adminPrisma);
+    const sweep = workerFor(adminPrisma).finalizeDrainedJobs();
     // Long enough for the sweep's statement to have reached the lock and be waiting on it.
     await new Promise((resolve) => setTimeout(resolve, 100));
     releaseWriter();
@@ -107,8 +107,8 @@ describe('the finalize sweep racing a concurrent writer', () => {
       const lastOpportunityId = job.opportunityIds.find((id) => id !== first!.opportunityId)!;
 
       await Promise.all([
-        runFinalizeSweep(adminPrisma),
-        recordChunkFailure(adminPrisma, job.jobId, [lastOpportunityId], 'injected failure'),
+        workerFor(adminPrisma).finalizeDrainedJobs(),
+        workerFor(adminPrisma).recordChunkFailure(job.jobId, [lastOpportunityId], 'injected failure'),
       ]);
 
       const finalJob = await adminPrisma.job.findUniqueOrThrow({ where: { id: job.jobId } });

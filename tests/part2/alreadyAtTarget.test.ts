@@ -1,4 +1,3 @@
-import { claimAndApplyChunk } from '../../src/worker/claimAndApplyChunk';
 import { enrollJob } from '../setup/jobFixtures';
 import {
   adminPrisma,
@@ -8,6 +7,7 @@ import {
   resetDb,
   type WorkspaceFixture,
 } from '../setup/testDb';
+import { workerFor } from '../setup/workerFixtures';
 
 /**
  * An opportunity already sitting in the target stage is a no-op by definition, and must be
@@ -39,7 +39,7 @@ describe('opportunities already at the target stage', () => {
       opportunities: [alreadyThere],
     });
 
-    const result = await claimAndApplyChunk(adminPrisma, job.jobId);
+    const result = await workerFor(adminPrisma).processChunk(job.jobId);
 
     expect(result).toMatchObject({ outcome: 'applied', claimedCount: 1, conflictCount: 0 });
 
@@ -65,7 +65,7 @@ describe('opportunities already at the target stage', () => {
       opportunities: [{ id: alreadyThere.id, version: alreadyThere.version + 7 }],
     });
 
-    const result = await claimAndApplyChunk(adminPrisma, job.jobId);
+    const result = await workerFor(adminPrisma).processChunk(job.jobId);
 
     // `done`, not `skipped_conflict`: the outcome the job wanted is already the case, so there is
     // nothing for a human's edit to have conflicted with.
@@ -84,7 +84,7 @@ describe('opportunities already at the target stage', () => {
       opportunities: [alreadyThere, moving],
     });
 
-    const result = await claimAndApplyChunk(adminPrisma, job.jobId);
+    const result = await workerFor(adminPrisma).processChunk(job.jobId);
 
     expect(result).toMatchObject({ outcome: 'applied', claimedCount: 2, doneCount: 2 });
     const rows = await adminPrisma.opportunity.findMany({

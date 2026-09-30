@@ -1,7 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { claimAndApplyChunk } from '../../src/worker/claimAndApplyChunk';
-import { runFinalizeSweep } from '../../src/worker/queries';
-import { resetConfigCache } from '../../src/shared/config';
+import { resetConfigCache } from '@config';
 import { enrollFreshOpportunities } from '../setup/jobFixtures';
 import {
   adminPrisma,
@@ -10,6 +8,7 @@ import {
   resetDb,
   type WorkspaceFixture,
 } from '../setup/testDb';
+import { workerFor } from '../setup/workerFixtures';
 
 /**
  * A chunk that fails for a reason no retry will fix — a bad target, a constraint the data cannot
@@ -88,7 +87,7 @@ describe('a chunk that keeps failing', () => {
     const job = await enrollFreshOpportunities(fixture, 2);
     const before = new Date();
 
-    const result = await claimAndApplyChunk(withFailingApply(adminPrisma), job.jobId);
+    const result = await workerFor(withFailingApply(adminPrisma)).processChunk(job.jobId);
 
     expect(result).toMatchObject({ outcome: 'apply-error', claimedCount: 2 });
 
@@ -114,7 +113,7 @@ describe('a chunk that keeps failing', () => {
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       await clearBackoff(job.jobId);
-      const result = await claimAndApplyChunk(failing, job.jobId);
+      const result = await workerFor(failing).processChunk(job.jobId);
       expect(result.outcome).toBe('apply-error');
     }
 
@@ -126,7 +125,7 @@ describe('a chunk that keeps failing', () => {
     // A healthy worker must not pick these up again, backoff cleared or not: `failed` is terminal
     // until an operator replays it.
     await clearBackoff(job.jobId);
-    const healthy = await claimAndApplyChunk(adminPrisma, job.jobId);
+    const healthy = await workerFor(adminPrisma).processChunk(job.jobId);
     expect(healthy).toMatchObject({ outcome: 'applied', claimedCount: 0 });
   });
 
@@ -146,10 +145,10 @@ describe('a chunk that keeps failing', () => {
     const failing = withFailingApply(adminPrisma);
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       await clearBackoff(job.jobId);
-      await claimAndApplyChunk(failing, job.jobId);
+      await workerFor(failing).processChunk(job.jobId);
     }
 
-    await runFinalizeSweep(adminPrisma);
+    await workerFor(adminPrisma).finalizeDrainedJobs();
 
     const finalJob = await adminPrisma.job.findUniqueOrThrow({ where: { id: job.jobId } });
     // `failed`, not `completed`: reporting completion for a job that dropped work on the floor is
