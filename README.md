@@ -27,14 +27,14 @@ is enforced by health checks and `service_completed_successfully`, never by slee
 | `migrate` | roles → Prisma migrations → grants | yes (0) |
 | `seed` | 5 000 + 2×2 000 opportunities, `--reset` first | yes (0) |
 | `api` | Express on `localhost:3000` | no |
-| `worker` | 3 claim loops + finalize sweep | no |
+| `worker` | 3 claim loops + a finalize sweeper on its own connection | no |
 | `test` | `jest --runInBand` against `postgres-test` | yes (0) |
 
 The suite's result is its exit code:
 
 ```bash
 docker compose ps -a          # test → Exited (0)
-docker compose logs test      # Test Suites: 26 passed, Tests: 94 passed
+docker compose logs test      # Test Suites: 30 passed, Tests: 103 passed
 ```
 
 `api` and `worker` deliberately stay up after the tests finish — the brief is "one command brings up
@@ -57,7 +57,9 @@ npm run dev              # api + worker in one terminal
 ```
 
 `DATABASE_URL_WORKER` **must** carry an explicit `connection_limit`: it is the isolation mechanism,
-and boot refuses to start without it, or if `WORKER_POOL_SIZE` exceeds it.
+and boot refuses to start without it, or if `WORKER_POOL_SIZE` exceeds it. The worker process opens
+that many connections for its claim loops plus one more for the finalize sweeper, which is pinned to
+a pool of one so it never queues behind a chunk.
 
 ### Tests
 
@@ -68,7 +70,7 @@ export DATABASE_URL_WORKER='postgresql://app_worker:app_worker@localhost:55433/g
 npm test
 ```
 
-26 suites / 94 tests. They truncate every table between cases, so point them at `ghl_test` — never
+30 suites / 103 tests. They truncate every table between cases, so point them at `ghl_test` — never
 at a database holding a dataset you want to keep.
 
 ### Benchmarks
@@ -94,7 +96,7 @@ validated against the `workspaces` table, and another tenant's row answers 404, 
 | POST | `/opportunities` | create |
 | POST | `/opportunities/:id/move` | single manual move; bumps `version` |
 | GET | `/stages/:stageId/opportunities` | keyset-paginated list (`?limit=&cursor=`) |
-| POST | `/jobs/bulk-move` | submit a bulk move → `202` |
+| POST | `/jobs/bulk-move` | submit a bulk move → `202`; a replayed `Idempotency-Key` → `200` with the original job, the same key with a different request → `409` |
 | GET | `/jobs/:id` | progress from committed state |
 | POST | `/jobs/:id/retry-failed` | re-enqueue items that exhausted their retries |
 | GET | `/health` | liveness |
@@ -139,7 +141,7 @@ All optional except the three database URLs. Parsed and validated at boot (`src/
 | `BULK_MAX_ITEMS` | 50000 | enrolment cap; beyond it, `truncated: true` |
 | `WORKER_POOL_SIZE` | 3 | claim loops; must be ≤ the worker `connection_limit` |
 | `MAX_ATTEMPTS` | 5 | retries before an item is `failed` |
-| `SWEEP_INTERVAL_MS` | 2000 | finalize sweep rate limit, process-wide |
+| `SWEEP_INTERVAL_MS` | 2000 | how often the sweeper finalizes drained jobs; it runs on its own timer and its own connection, never inside a claim loop |
 | `IDLE_BACKOFF_MS` | 250 | sleep when nothing is claimable |
 | `CLAIM_BACKOFF_MS` | 500 | sleep after a claim-level error |
 | `STUCK_AFTER_MS` | 60000 | staleness before `classification: "stuck"` |
@@ -148,10 +150,13 @@ All optional except the three database URLs. Parsed and validated at boot (`src/
 
 - Part 1: create an opportunity, move one by hand, list a stage with keyset pagination.
 - Part 2: `POST /jobs/bulk-move` with a snapshot of the match set, client-facing idempotency on
-  `(workspace_id, idempotency_key)`, and truncation reporting at the 50 000 cap.
+  `(workspace_id, idempotency_key)` — including a request fingerprint, so one key reused for a
+  different filter or target stage is a `409` rather than a silently wrong `200` — and truncation
+  reporting at the 50 000 cap.
 - A worker of N concurrent claim loops using `FOR UPDATE SKIP LOCKED`, one transaction per chunk,
   deterministic lock ordering, per-item exponential backoff, terminal `failed` after `MAX_ATTEMPTS`,
-  and an atomic time-gated finalize sweep.
+  and an atomic finalize sweeper on its own timer and connection. An apply failure isolates itself:
+  the chunk is re-run one item per transaction, so only the row that actually fails is penalised.
 - Optimistic concurrency against manual edits (`version` / `expected_version`): the manual edit wins
   and the item is reported as `skipped_conflict`.
 - A partial unique index on `transitions (job_id, opportunity_id)` making double-apply structurally
@@ -160,8 +165,9 @@ All optional except the three database URLs. Parsed and validated at boot (`src/
   `running | backing_off | stuck | completed | failed`, and `POST /jobs/:id/retry-failed`.
 - Tenant isolation: workspace-leading indexes, two Postgres roles with role-level statement
   timeouts, and two connection pools whose worker-side `connection_limit=3` is the actual mechanism.
-- 26 test suites / 94 tests, including a real-process SIGKILL-and-resume integration test, and three
-  benchmarks that measure the shipped entrypoints as separate processes.
+- 30 test suites / 103 tests, including a real-process SIGKILL-and-resume integration test, an
+  `EXPLAIN`-reading test that pins the claim query's index, and three benchmarks that measure the
+  shipped entrypoints as separate processes.
 
 ## What is not implemented
 

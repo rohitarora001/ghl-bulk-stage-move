@@ -146,6 +146,10 @@ model Job {
   /// Client-supplied. Scoped per workspace, not globally, so one tenant's key choice cannot
   /// collide with another's.
   idempotencyKey String    @map("idempotency_key")
+  /// Hash of the request the key was first used for. A later request reusing the key with a
+  /// different filter or target stage is refused with 409 rather than silently answered with this
+  /// job. Null only for jobs created before the column existed.
+  requestFingerprint String? @map("request_fingerprint")
   /// The filter as submitted, kept verbatim for the status response and for debugging. It is
   /// NOT re-evaluated: the snapshot in `job_items` is the authoritative guest list.
   filter         Json      @db.JsonB

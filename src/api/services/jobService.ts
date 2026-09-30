@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { interactivePrisma } from '../../db/prismaClients';
 import { getConfig } from '../../shared/config';
@@ -101,16 +102,68 @@ async function resolveTargetStage(
   return { pipelineId: target.pipelineId };
 }
 
-/** The reply for a key that has already been used: the caller gets the job they already have. */
+/**
+ * A stable hash of what the caller asked for.
+ *
+ * Object key order is not part of the request, so the JSON is canonicalised before hashing:
+ * two clients serialising the same filter differently must not look like two different requests.
+ * `undefined` members disappear in JSON, which is what we want — an absent optional filter field
+ * and an explicitly-undefined one are the same query.
+ */
+export function fingerprintRequest(filter: BulkMoveFilter, targetStageId: string): string {
+  const canonical = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (value !== null && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .filter(([, member]) => member !== undefined)
+          .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+          .map(([key, member]) => [key, canonical(member)]),
+      );
+    }
+    return value;
+  };
+  return createHash('sha256')
+    .update(JSON.stringify(canonical({ filter, targetStageId })))
+    .digest('hex');
+}
+
+/**
+ * The reply for a key that has already been used: the caller gets the job they already have —
+ * but only if they asked for the same thing.
+ *
+ * A key reused with a different filter or target stage is a client bug, and answering it with the
+ * original job's id and a 200 is the worst available outcome: the caller is told their second,
+ * different bulk move was accepted, and nothing will ever perform it. 409 instead.
+ */
 async function replayExisting(
   workspaceId: string,
   idempotencyKey: string,
+  fingerprint: string | null,
 ): Promise<SubmitBulkMoveResult | null> {
   const existing = await interactivePrisma.job.findUnique({
     where: { workspaceId_idempotencyKey: { workspaceId, idempotencyKey } },
-    select: { id: true, totalCount: true, matchedCount: true, truncated: true },
+    select: {
+      id: true,
+      totalCount: true,
+      matchedCount: true,
+      truncated: true,
+      requestFingerprint: true,
+    },
   });
   if (!existing) return null;
+  // A null stored fingerprint predates the column; there is nothing to compare, so the old
+  // replay behaviour stands rather than turning historical jobs into 409s.
+  if (
+    fingerprint !== null &&
+    existing.requestFingerprint !== null &&
+    existing.requestFingerprint !== fingerprint
+  ) {
+    throw ApiError.conflict(
+      'idempotency_key_conflict',
+      'Idempotency-Key was already used for a different filter or target stage',
+    );
+  }
   return {
     jobId: existing.id,
     totalCount: existing.totalCount,
@@ -157,12 +210,14 @@ function takeSnapshot(
   input: SubmitBulkMoveInput,
   where: Prisma.Sql,
   limit: number,
+  fingerprint: string,
 ): Promise<SubmitBulkMoveResult> {
   const { workspaceId, idempotencyKey, filter, targetStageId } = input;
   return interactivePrisma.$transaction(async (tx) => {
     const [job] = await tx.$queryRaw<{ id: string }[]>`
-      INSERT INTO jobs (workspace_id, idempotency_key, filter, target_stage_id, total_count)
-      VALUES (${workspaceId}::uuid, ${idempotencyKey}, ${filter as object}, ${targetStageId}::uuid, 0)
+      INSERT INTO jobs (workspace_id, idempotency_key, request_fingerprint, filter, target_stage_id, total_count)
+      VALUES (${workspaceId}::uuid, ${idempotencyKey}, ${fingerprint}, ${filter as object},
+              ${targetStageId}::uuid, 0)
       RETURNING id
     `;
     const jobId = job!.id;
@@ -213,20 +268,22 @@ export async function submitBulkMoveJob(input: SubmitBulkMoveInput): Promise<Sub
 
   // Cheap path for the common retry. It is not the guarantee — the unique constraint is — but it
   // keeps a retried request from paying for a snapshot query it would then have to discard.
-  const replay = await replayExisting(workspaceId, idempotencyKey);
+  const fingerprint = fingerprintRequest(filter, targetStageId);
+
+  const replay = await replayExisting(workspaceId, idempotencyKey, fingerprint);
   if (replay) return replay;
 
   const { pipelineId } = await resolveTargetStage(workspaceId, targetStageId, filter);
   const where = filterPredicates(workspaceId, pipelineId, filter);
 
   try {
-    return await takeSnapshot(input, where, limit);
+    return await takeSnapshot(input, where, limit, fingerprint);
   } catch (error) {
     if (!isUniqueViolation(error)) throw error;
     // Two retries arrived together and both got past the pre-check. Postgres made the loser wait
     // on the winner's uncommitted row, so by the time 23505 comes back the winner is committed
     // and visible. The loser's own job insert — and with it its whole snapshot — rolled back.
-    const winner = await replayExisting(workspaceId, idempotencyKey);
+    const winner = await replayExisting(workspaceId, idempotencyKey, fingerprint);
     if (!winner) throw error;
     return winner;
   }

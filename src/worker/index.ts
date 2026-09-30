@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { disconnectAll, jobPrisma } from '../db/prismaClients';
+import { disconnectAll, jobPrisma, sweepPrisma } from '../db/prismaClients';
 import { getConfig } from '../shared/config';
 import { logger } from '../shared/logger';
 import { claimAndApplyChunk } from './claimAndApplyChunk';
@@ -13,19 +13,6 @@ import { pickJobWithClaimableWork, runFinalizeSweep, touchLastProgress } from '.
  * without any handover protocol: a loop's only state is the transaction it is inside, and a
  * transaction that dies rolls back.
  */
-
-/**
- * When the next finalize sweep is allowed to run, shared by every loop in the process.
- *
- * Process-wide rather than per-loop because the interval is a rate limit, not a per-loop duty:
- * three loops each keeping their own clock would sweep three times as often as configured.
- */
-let nextSweepAt = 0;
-
-/** Test seam — a fresh test's first iteration must be allowed to sweep immediately. */
-export function resetSweepClock(): void {
-  nextSweepAt = 0;
-}
 
 /**
  * Abort-aware sleep. A plain `setTimeout` would make SIGTERM wait out the full backoff before the
@@ -46,27 +33,39 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /**
- * Runs the finalize sweep if the interval has elapsed.
+ * The finalize sweeper: one per process, on its own clock and its own connection.
  *
- * Time-gated, and deliberately NOT idle-gated. Sweeping only when the picker returns nothing
- * sounds equivalent and is not: while one tenant's 50 000-item job keeps every loop busy, a small
- * job that drained in the first second would stay `running` for the whole of it, and the progress
- * endpoint — which reports committed state — would keep telling that customer their finished job
- * is still working.
+ * Time-driven, and deliberately neither idle-gated nor loop-gated.
  *
- * The slot is claimed before the await, so two loops reaching this together cannot both sweep.
+ * Idle-gating — sweeping only when the picker returns nothing — would leave a small job that
+ * drained in the first second at `running` for as long as some other tenant's 50 000-item job
+ * keeps the pool busy, and the progress endpoint reports committed state, so that customer is
+ * told their finished job is still working.
+ *
+ * Running it at the top of a claim loop has the same failure in a narrower window: a chunk may
+ * hold its transaction for up to 60s, and while every loop is inside one, nothing reaches the top
+ * of a loop body. Hence a loop of its own — and `sweepPrisma`, whose single connection is held by
+ * nothing else, so the sweeper never queues behind the chunks it is meant to report on.
  */
-async function maybeSweep(prisma: PrismaClient): Promise<void> {
-  const now = Date.now();
-  if (now < nextSweepAt) return;
-  nextSweepAt = now + getConfig().sweepIntervalMs;
-  try {
-    const finalized = await runFinalizeSweep(prisma);
-    if (finalized > 0) logger.info('jobs_finalized', { count: finalized });
-  } catch (error) {
-    // A failed sweep is not fatal: the jobs stay `running` and the next sweep finalizes them.
-    logger.warn('sweep_error', { error: String(error) });
+export async function runSweepLoop(
+  signal: AbortSignal,
+  prisma: PrismaClient = sweepPrisma,
+): Promise<void> {
+  const config = getConfig();
+  logger.info('sweeper_started', {});
+
+  while (!signal.aborted) {
+    try {
+      const finalized = await runFinalizeSweep(prisma);
+      if (finalized > 0) logger.info('jobs_finalized', { count: finalized });
+    } catch (error) {
+      // A failed sweep is not fatal: the jobs stay `running` and the next sweep finalizes them.
+      logger.warn('sweep_error', { error: String(error) });
+    }
+    await sleep(config.sweepIntervalMs, signal);
   }
+
+  logger.info('sweeper_stopped', {});
 }
 
 /**
@@ -85,9 +84,6 @@ export async function runLoop(
 
   while (!signal.aborted) {
     try {
-      await maybeSweep(prisma);
-      if (signal.aborted) break;
-
       const jobId = await pickJobWithClaimableWork(prisma);
       if (jobId === null) {
         await sleep(config.idleBackoffMs, signal);
@@ -138,10 +134,11 @@ export async function startWorker(): Promise<void> {
   process.on('SIGINT', () => shutdown('SIGINT'));
 
   logger.info('worker_started', { loops: config.workerPoolSize });
-  const loops = Array.from({ length: config.workerPoolSize }, (_, index) =>
+  const workers = Array.from({ length: config.workerPoolSize }, (_, index) =>
     runLoop(index + 1, controller.signal),
   );
-  await Promise.all(loops);
+  workers.push(runSweepLoop(controller.signal));
+  await Promise.all(workers);
   await disconnectAll();
   logger.info('worker_stopped', {});
 }

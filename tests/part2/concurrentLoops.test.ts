@@ -1,5 +1,5 @@
 import { claimAndApplyChunk } from '../../src/worker/claimAndApplyChunk';
-import { runLoop, resetSweepClock } from '../../src/worker/index';
+import { runLoop, runSweepLoop } from '../../src/worker/index';
 import { resetConfigCache } from '../../src/shared/config';
 import {
   adminPrisma,
@@ -81,7 +81,6 @@ describe('three loops draining one job with no manual edits', () => {
     }
     resetConfigCache();
     await resetDb();
-    resetSweepClock();
     fixture = await createWorkspace('workspace-a');
   });
 
@@ -105,6 +104,8 @@ describe('three loops draining one job with no manual edits', () => {
       await new Promise((resolve) => setTimeout(resolve, index * 7));
       return runLoop(index + 1, controller.signal, adminPrisma);
     });
+    // The sweeper is what finalizes the job; the loops only drain it.
+    loops.push(runSweepLoop(controller.signal, adminPrisma));
 
     let status: string;
     try {

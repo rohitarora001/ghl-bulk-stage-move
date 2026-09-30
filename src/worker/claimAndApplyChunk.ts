@@ -36,8 +36,12 @@ interface LockedOpportunity {
 export async function claimAndApplyChunk(
   prisma: PrismaClient,
   jobId: string,
+  /**
+   * How many items to claim. Defaults to the configured chunk size; the isolation pass below
+   * passes 1, which is also what stops it recursing.
+   */
+  limit: number = getConfig().chunkSize,
 ): Promise<ChunkResult> {
-  const config = getConfig();
   let claimedIds: string[] = [];
 
   try {
@@ -58,7 +62,7 @@ export async function claimAndApplyChunk(
             AND status = 'pending'
             AND next_attempt_at <= now()
           ORDER BY id
-          LIMIT ${config.chunkSize}
+          LIMIT ${limit}
           FOR UPDATE SKIP LOCKED
         `;
         if (claimed.length === 0) {
@@ -178,7 +182,67 @@ export async function claimAndApplyChunk(
     // penalty is recorded in a fresh transaction of its own — recording it inside the failed one
     // would roll back with it and the poison chunk would retry at full speed forever.
     logger.warn('chunk_apply_error', { jobId, claimedCount: claimedIds.length, error: message });
+
+    // Which of the claimed rows actually caused this is unknowable from the error: the chunk is
+    // one transaction, so the rollback hits every row whether it was going to commit or not.
+    // Charging them all for it is what turns one poisoned opportunity into a failed job — 499
+    // blameless rows collect an attempt each and, after MAX_ATTEMPTS, the whole job is `failed`
+    // with nothing moved. Re-run the same items one at a time instead, so each row is judged on
+    // its own transaction and only the offender is penalised. The pass costs N round trips, but
+    // it is only ever paid on a failure.
+    if (claimedIds.length > 1) return isolateChunk(prisma, jobId, claimedIds.length, message);
+
     await recordChunkFailure(prisma, jobId, claimedIds, message);
     return { outcome: 'apply-error', claimedCount: claimedIds.length, error: message };
   }
+}
+
+/**
+ * Re-applies a failed chunk's items one per transaction.
+ *
+ * Every call here claims with `limit = 1`, so each one takes the Tier 2 branch above with a single
+ * claimed id and penalises only that row — which is also why this cannot recurse: a one-item chunk
+ * never satisfies `claimedIds.length > 1`.
+ *
+ * It re-claims rather than being handed the ids: the failed items are `pending` again after the
+ * rollback, and re-claiming keeps every row that passes through here going through the same
+ * `FOR UPDATE SKIP LOCKED` path, so a row another loop picked up in the meantime is simply skipped
+ * instead of being worked twice.
+ */
+async function isolateChunk(
+  prisma: PrismaClient,
+  jobId: string,
+  attempts: number,
+  chunkError: string,
+): Promise<ChunkResult> {
+  let claimedCount = 0;
+  let doneCount = 0;
+  let conflictCount = 0;
+  let lastError: string | null = null;
+
+  for (let index = 0; index < attempts; index += 1) {
+    const result = await claimAndApplyChunk(prisma, jobId, 1);
+    if (result.outcome === 'claim-error') {
+      lastError = result.error;
+      break;
+    }
+    claimedCount += result.claimedCount;
+    if (result.outcome === 'apply-error') {
+      lastError = result.error;
+      continue;
+    }
+    // Nothing left that this loop can claim: the rest of the chunk was backed off by a failure
+    // above, or another loop took it. Either way there is no more work to isolate.
+    if (result.claimedCount === 0) break;
+    doneCount += result.doneCount;
+    conflictCount += result.conflictCount;
+  }
+
+  if (lastError !== null) {
+    return { outcome: 'apply-error', claimedCount, error: lastError };
+  }
+  // Every item applied on its own: the chunk failed for something transient — a deadlock, a lost
+  // connection — rather than for its contents.
+  logger.info('chunk_isolation_recovered', { jobId, claimedCount, error: chunkError });
+  return { outcome: 'applied', claimedCount, doneCount, conflictCount };
 }

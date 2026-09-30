@@ -5,6 +5,9 @@ import { submitBulkMoveJob } from '../services/jobService';
 import { getJobProgress } from '../services/progressService';
 import { retryFailedItems } from '../services/retryService';
 
+/** Comfortably under the 2704-byte btree index-entry limit, and longer than any sane UUID key. */
+const MAX_IDEMPOTENCY_KEY_LENGTH = 255;
+
 export function jobsRouter(): Router {
   const router = Router();
 
@@ -12,6 +15,18 @@ export function jobsRouter(): Router {
     const idempotencyKey = req.header('Idempotency-Key');
     if (!idempotencyKey) {
       next(ApiError.badRequest('idempotency_key_required', 'Idempotency-Key header is required'));
+      return;
+    }
+    // The key is a btree index column. Past ~2704 bytes Postgres refuses the index entry outright
+    // (SQLSTATE 54000), which reaches the caller as a 500 for what is plainly their input; Node's
+    // 16KB header cap is far too loose to stop it. Bounded well below the index limit instead.
+    if (idempotencyKey.length > MAX_IDEMPOTENCY_KEY_LENGTH) {
+      next(
+        ApiError.badRequest(
+          'idempotency_key_invalid',
+          `Idempotency-Key must be at most ${MAX_IDEMPOTENCY_KEY_LENGTH} characters`,
+        ),
+      );
       return;
     }
 

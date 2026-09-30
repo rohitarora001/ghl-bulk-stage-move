@@ -15,8 +15,8 @@ Two processes over one Postgres 16 database.
 - **api** (Express 5) — `POST /opportunities`, `POST /opportunities/:id/move`,
   `GET /stages/:stageId/opportunities` (keyset paginated), `POST /jobs/bulk-move`, `GET /jobs/:id`,
   `POST /jobs/:id/retry-failed`, `GET /health`. Every request carries `X-Workspace-Id`.
-- **worker** — `WORKER_POOL_SIZE` (default 3) identical claim loops plus a time-gated finalize
-  sweep. No coordinator, no leader election, no in-memory queue.
+- **worker** — `WORKER_POOL_SIZE` (default 3) identical claim loops, plus a finalize sweeper on its
+  own timer and its own connection. No coordinator, no leader election, no in-memory queue.
 
 Three tables carry the job: `jobs` (one row per submission), `job_items` (one row per enrolled
 opportunity — the unit of work, the dedupe key, and the cursor), `transitions` (the audit row
@@ -60,7 +60,7 @@ completed 6.00 s later, **0 duplicate applies, 0 dropped**.
 Work lost to a kill is bounded by one chunk per loop, because a chunk is claimed and applied
 atomically. An item is `pending` or it is finished; there is no half-applied state to reconcile.
 
-**The index — and the honest version of "cheap".** The intended claim index is
+**The index — and the honest version of "cheap".** The first claim index written for this query was
 
 ```sql
 CREATE INDEX job_items_claimable_idx ON job_items (job_id, next_attempt_at, id)
@@ -79,16 +79,25 @@ dataset, Postgres 16, chunk 500, the planner ignores it and walks the primary ke
 | 5 000 pending, 45 000 done, plus a previous job's 50 000 rows in the table | same plan, `Rows Removed by Filter: 95 000` | 91 837 | 19.5 ms |
 | 5 000 pending, 45 000 done, with `(job_id, id) WHERE status = 'pending'` added | `Index Scan using job_items_claim_order_idx` | 1 334 | 3.7 ms |
 
-So the shipped claim cost is **O(rows already finished)** per chunk, not O(chunk): each claim walks
-the primary key past every done row of this job — and of every earlier job — before it reaches the
-first pending one. The fix is one index whose columns match the query, `(job_id, id) WHERE status =
-'pending'`, which flattens it back to ~3 ms at any depth (last row above).
+Without the last row's index the claim costs **O(rows already finished)** per chunk, not O(chunk):
+each claim walks the primary key past every done row of this job — and of every earlier job — before
+it reaches the first pending one. An offset-shaped cost arrived at without ever persisting an offset.
+
+The last row is what ships. `job_items_claim_order_idx (job_id, id) WHERE status = 'pending'` is in
+the migrations (`20260930190500_job_items_claim_order_index`), and `job_items_claimable_idx` stays
+beside it: its column order is wrong for the claim and right for the picker's
+`EXISTS (... AND next_attempt_at <= now())`, which takes an Index Only Scan on it.
+`tests/part2/claimPlan.test.ts` builds a 50 000-item job with 45 000 done and asserts on the claim's
+`EXPLAIN` — the index by name, and zero rows discarded by filter. Drop the index and that test
+reports `job_items_pkey`, which is how the finding was reproduced in the first place. An index
+nothing asserts on is an index a later migration quietly removes.
 
 Why the benchmark did not catch it: at 50 000 items the extra work is ~100 chunks × an average of a
 few milliseconds, against an apply that updates 500 rows and inserts 500 transitions each time, run
 by three loops in parallel. Measured drain was **50 000 items in 8.96 s (5 578 items/sec)** with a
 last-third/first-third rate ratio of **1.25** — steady, arguably improving. The quadratic term is
-real and simply too small to see at this size. At 10× it is not (§6).
+real and simply too small to see at this size. At 10× it is not (§6). Every number in
+`BENCHMARKS.md` was measured *before* the index was added, so they are the pessimistic ones.
 
 The snapshot's own index is a different one and does work as designed:
 `idx_opportunities_filter (workspace_id, stage_id, owner_id, status, created_at, value)` and
@@ -105,12 +114,21 @@ the loser catches SQLSTATE 23505, re-reads the winner's row and returns it. The 
 snapshot rolls back with its job insert, so a duplicate key can never leave orphaned `job_items`.
 This survives a restart because it is a committed row, not a memory cache.
 
+A reused key is answered with the original job only if it is the *same request*. The job stores a
+SHA-256 of the canonicalised `(filter, targetStageId)` — object keys sorted, so serialisation order
+is not part of the identity — and a key replayed with a different filter or target stage is refused
+with **409 `idempotency_key_conflict`**. Answering that case with the first job's id and a 200 would
+tell the caller their second, different bulk move was accepted while nothing would ever perform it,
+which is worse than any error. The column is nullable and a null skips the comparison, so jobs
+written before it existed keep replaying rather than turning into 409s.
+
 **The gap, stated plainly: this protects against a client that *reuses* its key, and nothing else.**
 A client that mints a fresh UUID per retry is indistinguishable from a client genuinely asking for a
 second bulk move, and the server will create and execute a second job. The mitigation I did not
 build — hashing `(filter, targetStageId)` and rejecting a recent identical submission — was rejected
 because a deliberately repeated bulk move is a legitimate operation, and a server that silently
-swallows the second one is worse than one that runs it. What limits the damage instead is that a
+swallows the second one is worse than one that runs it. (The same hash exists — it is what the
+paragraph above compares — but it is only ever consulted *within* one key, never across keys.) What limits the damage instead is that a
 bulk move is idempotent *in its end state*: the duplicate run finds every opportunity already in the
 target stage and marks each item `done` without an UPDATE, a version bump, or a transition row
 (`claimAndApplyChunk.ts`, the `row.stage_id === job.target_stage_id` branch). Real damage requires a
@@ -167,6 +185,18 @@ and at `MAX_ATTEMPTS` (5) marks the item `failed` with `last_error`. Terminal, n
 which is what makes `jobs.status = 'failed'` reachable by something other than a vague catch-all, and
 what `POST /jobs/:id/retry-failed` exists to undo.
 
+**One bad row costs one row.** The chunk is one transaction, so a single unapplicable item rolls
+back its 499 blameless chunkmates with it — and the error says nothing about which item was at
+fault. Charging the whole claimed set for the rollback is what turns one poisoned opportunity into a
+failed job: every chunkmate collects an attempt it did not earn and, after `MAX_ATTEMPTS` passes,
+the job is `failed` with nothing moved. So an apply failure on a multi-item chunk triggers an
+**isolation pass**: the same claim, re-run with `LIMIT 1`, once per claimed item. Each row is then
+judged in a transaction of its own, the healthy ones commit, and only the offender is penalised and
+backed off. A one-item chunk cannot trigger the pass, which is what bounds the recursion at one
+level. The cost is N+1 transactions instead of 1, paid only on the failure path
+(`tests/part2/poisonIsolation.test.ts` pins it with a real constraint violation, not an injected
+one).
+
 ## 4. Snapshot, not live filter set
 
 At submission, one set-based statement enrols every currently-matching opportunity's `id` and
@@ -220,7 +250,10 @@ separate pools even with identical configuration — **the process split is not 
 mechanism is the worker pool's cap, a hard ceiling on how many Postgres backends the worker can
 occupy no matter how much work is queued. Boot refuses to start if `WORKER_POOL_SIZE` exceeds that
 cap, because the surplus loops would block forever on a connection that only frees when a starved
-loop finishes.
+loop finishes. The exact count, since the cap is the claim: the worker holds `connection_limit=3`
+for its loops plus **one** more for the finalize sweeper, which uses a separate client pinned to
+`connection_limit=1`. The sweeper is given its own connection precisely because it must not queue
+behind three chunk transactions that are each allowed to run for 60 s.
 
 **Query isolation — role-level statement timeouts.** Two Postgres roles, `app_interactive` (10 s)
 and `app_worker` (30 s), set via `ALTER ROLE ... SET statement_timeout`. Server-side, so they apply
@@ -276,10 +309,12 @@ first item rather than something snuck in here.
 **(b) Second: `job_items` growth and the cost of reading progress.** 500 000 items per job, retained
 after completion, is tens of millions of rows within weeks. Two consequences, one measured:
 
-- The claim query degrades with finished rows, measured in §1 — 3.1 ms → 19.5 ms as one job drains
-  with one earlier job's rows in the table. At 1 000 chunks per job and millions of retained rows
-  that is the dominant cost, and it compounds across jobs because `job_items_pkey` order is global,
-  not per job. The `(job_id, id) WHERE status = 'pending'` index removes it.
+- The claim query used to degrade with finished rows — 3.1 ms → 19.5 ms across one job's drain, §1 —
+  which at 1 000 chunks per job and millions of retained rows would have been the dominant cost, and
+  compounded across jobs because `job_items_pkey` order is global rather than per job.
+  `job_items_claim_order_idx` removes that term: the index holds only `pending` rows, so it shrinks
+  as the job drains and knows nothing about earlier jobs. What remains at 10× is index maintenance
+  and autovacuum on a table taking half a million inserts and half a million status updates per job.
 - Progress is `count(*) FILTER (...)` over every item of the job. At 50 000 it is a few milliseconds
   on `job_items_job_id_status_idx`; at 500 000 it is an index scan of half a million entries on
   every poll, and dashboards poll. The answer is a counters row on `jobs`, updated in the same
@@ -306,19 +341,19 @@ partitioning or retention, and it is the table a 10× move writes 500 000 rows i
    flips the job to `running`. Removes the one unbounded operation on the request path (§6a) and
    makes the snapshot itself resumable. Cost: `totalCount` is not known at 202 time, so the progress
    contract needs a fourth state and clients need to handle `totalCount: null`.
-2. **The claim index, and a test that would have caught its absence.** Add `(job_id, id) WHERE
-   status = 'pending'`; assert in a test that the claim query's plan uses it and that buffer counts
-   do not grow as a job drains. This is a one-line migration with a measured 4× effect at 90% drain
-   (§1) and it is item 2 only because item 1 is a failure and this is a slope.
-3. **Per-tenant fairness.** A quota or weighted picker so one workspace's ten jobs cannot monopolise
+2. **Per-tenant fairness.** A quota or weighted picker so one workspace's ten jobs cannot monopolise
    three connections (§5's hole). Simplest honest version: pick the job whose workspace has the
    fewest chunks applied in the last minute.
-4. **Progress counters on `jobs`.** Per-status columns updated by delta inside the chunk
+3. **Progress counters on `jobs`.** Per-status columns updated by delta inside the chunk
    transaction, replacing the `GROUP BY` at read time (§6b). Needs care to stay contention-free.
-5. **Retention.** Partition `job_items` and `transitions` by month; drop or archive completed jobs'
-   items after N days. Also removes most of (2)'s and (4)'s pressure.
-6. **A real error taxonomy and a dead-letter view.** Today a poisoned item carries `last_error` text
+4. **Retention.** Partition `job_items` and `transitions` by month; drop or archive completed jobs'
+   items after N days. Also removes most of (3)'s pressure.
+5. **A real error taxonomy and a dead-letter view.** Today a poisoned item carries `last_error` text
    and nothing aggregates it; an operator has to query the table to learn why 12 items failed.
+6. **A cheaper isolation pass.** §3's pass re-runs a failed chunk one item at a time — 500 extra
+   transactions for one bad row. Binary splitting would find the offender in ~9 rounds instead.
+   Ranked here because the pass only runs on failure and correctness is already right; it is
+   throughput under a poisoned job, not a defect.
 7. **Cancellation.** There is no `POST /jobs/:id/cancel`. Given the snapshot model it is nearly free
    — set `status = 'cancelled'` and let the picker stop selecting it — but "nearly free" is not
    "built", and half-cancelled semantics (what about the chunk in flight?) deserve a test, not a
@@ -341,15 +376,22 @@ being given openly rather than left to be discovered.
 
 ## Honest weak spots
 
-- **The claim index does not serve the claim query.** Measured, §1: the shipped plan walks
-  `job_items_pkey` and its cost grows with the number of finished rows in the table, not with the
-  work remaining. 3.1 ms → 19.5 ms across one job's drain. Not visible at 50 000 items; dominant at
-  10×.
+- **The first claim index did not serve the claim query.** Measured, §1: the plan walked
+  `job_items_pkey` and its cost grew with the number of finished rows in the table rather than with
+  the work remaining, 3.1 ms → 19.5 ms across one job's drain. Fixed in this branch by
+  `job_items_claim_order_idx` and pinned by a plan test, but worth keeping on this list: the
+  benchmark that was supposed to prove chunking was cheap ran green for the whole of it, because at
+  50 000 items the term is too small to see. The lesson generalises to every other performance claim
+  here that is asserted at one size.
+- **A poisoned chunk costs 500 transactions.** §3's isolation pass is correct and linear; it is not
+  clever. A job with many independently-bad rows re-runs the pass per chunk.
 - **Submission is synchronous and can spill to disk.** 1.6–1.7 s measured at 50 000, with the broad
   filter's sort already going to `external merge, Disk: 3016 kB`. The "memory-bounded" version of
   this claim is only true at small limits.
 - **Idempotency protects a key-reusing client only.** A client minting a new key per retry gets a
-  second job (§2). Convergent end state limits the damage; it does not eliminate it.
+  second job (§2). Convergent end state limits the damage; it does not eliminate it. The request
+  fingerprint catches the opposite mistake — one key, two different requests — and nothing catches
+  two keys, one request.
 - **Nothing arbitrates between tenants' bulk jobs.** Two pools for the whole application (§5).
 - **Horizontal scaling is safe but unbuilt.** `SKIP LOCKED` means a second worker container would be
   correct today; there is no leader election, quota, or distributed coordination, because grading is

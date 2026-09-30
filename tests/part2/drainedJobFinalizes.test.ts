@@ -1,4 +1,4 @@
-import { runLoop, resetSweepClock } from '../../src/worker/index';
+import { runLoop, runSweepLoop } from '../../src/worker/index';
 import { runFinalizeSweep } from '../../src/worker/queries';
 import { resetConfigCache } from '../../src/shared/config';
 import { enrollFreshOpportunities } from '../setup/jobFixtures';
@@ -74,7 +74,6 @@ describe('a drained job', () => {
 
   beforeEach(async () => {
     await resetDb();
-    resetSweepClock();
     fixture = await createWorkspace('workspace-a');
   });
 
@@ -104,9 +103,10 @@ describe('a drained job', () => {
     });
 
     const controller = new AbortController();
-    const loops = [
+    const workers = [
       runLoop(1, controller.signal, adminPrisma),
       runLoop(2, controller.signal, adminPrisma),
+      runSweepLoop(controller.signal, adminPrisma),
     ];
 
     try {
@@ -118,7 +118,7 @@ describe('a drained job', () => {
       expect(stillBusy).toBeGreaterThan(0);
     } finally {
       controller.abort();
-      await Promise.all(loops);
+      await Promise.all(workers);
     }
   });
 });

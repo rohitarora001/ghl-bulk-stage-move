@@ -33,6 +33,20 @@ function build(url: string): PrismaClient {
 
 let interactive: PrismaClient | undefined;
 let job: PrismaClient | undefined;
+let sweep: PrismaClient | undefined;
+
+/**
+ * The worker URL with its pool forced to a single connection.
+ *
+ * The sweeper needs one connection and must never wait for one. Sharing `jobPrisma` would put it
+ * behind `connection_limit` chunk transactions, each allowed to run for up to 60s — which is
+ * exactly the delay the sweeper exists to avoid.
+ */
+function withSingleConnection(url: string): string {
+  const parsed = new URL(url);
+  parsed.searchParams.set('connection_limit', '1');
+  return parsed.toString();
+}
 
 /** Used only by Express request handlers. Larger pool, 10s statement timeout. */
 export function getInteractivePrisma(): PrismaClient {
@@ -46,10 +60,17 @@ export function getJobPrisma(): PrismaClient {
   return job;
 }
 
+/** Used only by the finalize sweeper. One connection of its own, held by nothing else. */
+export function getSweepPrisma(): PrismaClient {
+  sweep ??= build(withSingleConnection(getConfig().databaseUrlWorker));
+  return sweep;
+}
+
 export async function disconnectAll(): Promise<void> {
-  await Promise.all([interactive?.$disconnect(), job?.$disconnect()]);
+  await Promise.all([interactive?.$disconnect(), job?.$disconnect(), sweep?.$disconnect()]);
   interactive = undefined;
   job = undefined;
+  sweep = undefined;
 }
 
 /**
@@ -66,3 +87,4 @@ function lazyClient(get: () => PrismaClient): PrismaClient {
 
 export const interactivePrisma: PrismaClient = lazyClient(getInteractivePrisma);
 export const jobPrisma: PrismaClient = lazyClient(getJobPrisma);
+export const sweepPrisma: PrismaClient = lazyClient(getSweepPrisma);
