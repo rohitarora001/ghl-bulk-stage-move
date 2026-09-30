@@ -32,3 +32,18 @@ on the `feat/bulk-stage-move` branch.
 - [x] Repo initialised, initial commit on `main`, work branch `feat/bulk-stage-move` created
 - [x] Container Postgres reachable for tests
 - [ ] Application code, tests, docker-compose topology (tracked by later nodes)
+
+## The memory graph is version-controlled (commit f8aaaf7)
+
+`.gitignore` no longer ignores `.claude/` wholesale. `.claude/graph/` — 14 nodes plus
+`guidelines/backend.md` — is tracked and pushed, because it records what each module does, the
+decisions behind it, and the gotchas that were expensive to find. That is project knowledge and it
+belongs beside the code.
+
+`.claude/settings.local.json` stays ignored: per-machine permission state, which is what the
+`.local` convention means, and it would conflict on every checkout.
+
+Consequence to remember: node edits are now part of the diff a reviewer sees, so the post-commit
+graph update lands in its own commit or in the one it describes — never as an untracked
+side-effect.
+
