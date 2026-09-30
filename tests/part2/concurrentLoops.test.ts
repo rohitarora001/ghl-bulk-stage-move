@@ -1,6 +1,6 @@
+import { resetConfigCache } from '@config';
 import { claimAndApplyChunk } from '../../src/worker/claimAndApplyChunk';
 import { runLoop, runSweepLoop } from '../../src/worker/index';
-import { resetConfigCache } from '../../src/shared/config';
 import {
   adminPrisma,
   createWorkspace,

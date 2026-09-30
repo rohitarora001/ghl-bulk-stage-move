@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { getConfig } from '../shared/config';
+import { getConfig } from '@config';
 
 /**
  * Every query the worker loop needs that is not the chunk transaction itself.

@@ -10,6 +10,9 @@ import { z } from 'zod';
  * finishes, which it cannot do while starved. So the relationship is validated at boot rather
  * than discovered as a hang.
  */
+/** Anything env-shaped: the real `process.env` in production, a literal object in tests. */
+export type EnvSource = NodeJS.ProcessEnv | Record<string, string | undefined>;
+
 export interface Config {
   databaseUrlAdmin: string;
   databaseUrlInteractive: string;
@@ -45,6 +48,34 @@ const schema = z.object({
   STUCK_AFTER_MS: positiveInt(60000),
 });
 
+/**
+ * The two observability switches are read leniently, on purpose, and deliberately not part of the
+ * schema above.
+ *
+ * `LOG_LEVEL` and `PRISMA_LOG` change how the process *talks*, not what it does. A typo in either
+ * must not stop a worker from draining a job, which is exactly what putting them in the strict
+ * schema would do. They also stay uncached: the suite flips `LOG_LEVEL` between cases and expects
+ * the next line to obey it.
+ */
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+const LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error'];
+
+/** The configured log level, or `info` when it is absent or unrecognised. */
+export function readLogLevel(env: EnvSource = process.env): LogLevel {
+  const raw = (env.LOG_LEVEL ?? 'info').toLowerCase();
+  return LOG_LEVELS.find((level) => level === raw) ?? 'info';
+}
+
+export type PrismaLogMode = 'silent' | 'query' | 'default';
+
+/** How much Prisma itself should log. Anything unrecognised means the default. */
+export function readPrismaLogMode(env: EnvSource = process.env): PrismaLogMode {
+  if (env.PRISMA_LOG === 'silent') return 'silent';
+  if (env.PRISMA_LOG === 'query') return 'query';
+  return 'default';
+}
+
 /** Reads `connection_limit` off a Prisma connection string, or null when it is absent. */
 export function connectionLimitOf(databaseUrl: string): number | null {
   let parsed: URL;
@@ -59,7 +90,7 @@ export function connectionLimitOf(databaseUrl: string): number | null {
   return Number.isInteger(value) && value > 0 ? value : null;
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv | Record<string, string | undefined>): Config {
+export function loadConfig(env: EnvSource): Config {
   // Strip blanks so an exported-but-empty shell variable reads as absent, not as "".
   const present = Object.fromEntries(
     Object.entries(env).filter(([, value]) => value !== undefined && value !== ''),

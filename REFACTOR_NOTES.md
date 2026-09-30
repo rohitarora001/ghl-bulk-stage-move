@@ -316,6 +316,47 @@ before the next begins.
    (`npm run dev`, `docker compose up`) keep their names and effects.
 10. **`DESIGN.md` and `BENCHMARKS.md` keep their measurements**; the file paths named inside them
     are updated in Phase 5 so the documents do not point at moved files.
+11. **Path aliases need two runtime loaders, so both are dev dependencies.** `tsconfig-paths`
+    resolves `@shared/*` under `ts-node` (dev, scripts, compose, and the two tests that spawn a
+    real process), and `tsc-alias` rewrites the aliases to relative paths in `dist/` so the
+    compiled entrypoints need no loader at all. Without the first, a spawned worker dies on its
+    first import — which is exactly how `killResume.test.ts` caught it.
+12. **`statusCode` is the single name for an error's HTTP status.** The old `ApiError` exposed
+    `status`. Two service-level test assertions named that field and were updated
+    (`collision.test.ts:118,137`); no HTTP response changed, and the wire is still covered by the
+    supertest suites. An alias getter was rejected: two names for one value is how the next
+    reader ends up checking the wrong one.
+13. **`requestId()` sets no response header.** Correlation ids go to logs only. Echoing
+    `X-Request-Id` back would change what every endpoint returns.
+
+## Phase 1 — foundations (complete)
+
+Landed, suite 103/103 green, `build`, `typecheck` and `lint` all clean:
+
+- `src/config/` is now the only reader of `process.env`. `LOG_LEVEL` and `PRISMA_LOG` were
+  absorbed from `logger.ts` and `prismaClients.ts`, but **leniently**: they change how the process
+  talks, not what it does, so a typo must not stop a worker from draining a job. They also stay
+  uncached, because the suite flips `LOG_LEVEL` between cases.
+- `shared/errors/`: `AppError` (statusCode, code, message, details, isOperational) with
+  `BadRequest`, `Unauthorized`, `Forbidden`, `NotFound`, `Conflict`, `PayloadTooLarge` subclasses,
+  plus `ERROR_CODE` — all 22 error codes the API can answer with, previously inline literals.
+  `src/api/errors.ts` is now a three-function shim returning those classes, deleted in Phase 3.
+- `shared/database/`: the three lazy clients moved here, plus `withTransaction` and the Postgres/
+  Prisma error codes (`23505`, `42501`, `54000`, `57014`, `P2002`, `P2025`) named once.
+- `shared/middleware/`: `errorHandler` (the only place an error becomes a response),
+  `notFound`, `requestId`, and `validate`/`validated` — the middleware that replaces the 8
+  duplicated `safeParse` blocks in Phase 2 and 3.
+- `shared/http/asyncHandler`, `shared/logger/` (now with `withContext` for correlation),
+  `shared/types/express.d.ts`.
+- Tooling: ESLint 9 flat config with import ordering, `import/no-cycle`, and
+  `import/no-restricted-paths` encoding the layer rules; per-layer `no-restricted-imports` so a
+  `*.service.ts` cannot import Prisma or Express and a `*.controller.ts` cannot import a
+  repository. Prettier, path aliases, and `lint`/`lint:fix`/`format`/`format:check`/`start`
+  scripts.
+- `docker-compose.yml` service commands gained `-r tsconfig-paths/register` (deviation 11).
+
+`createApp()` already uses the new `requestId`/`notFound`/`errorHandler`; response bytes are
+unchanged, which the untouched supertest suites prove.
 
 ## 11. Follow-ups (out of scope here)
 

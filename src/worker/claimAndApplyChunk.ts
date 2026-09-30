@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
-import { getConfig } from '../shared/config';
-import { logger } from '../shared/logger';
+import { getConfig } from '@config';
+import { logger } from '@shared/logger';
 import { recordChunkFailure } from './queries';
 
 /**

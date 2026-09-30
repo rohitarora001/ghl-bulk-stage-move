@@ -60,7 +60,7 @@ services:
   # and on every invocation.
   migrate:
     <<: *app
-    command: ['npx', 'ts-node', 'scripts/migrate.ts']
+    command: ['npx', 'ts-node', '-r', 'tsconfig-paths/register', 'scripts/migrate.ts']
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,14 +70,14 @@ services:
     # `--reset` so `docker compose up` twice does not stack two demo datasets on top of each
     # other. Small dataset: the benchmark's 500k rows belong to `npm run seed -- --large`, run
     # deliberately, not to every `compose up`.
-    command: ['npx', 'ts-node', 'scripts/seed.ts', '--reset']
+    command: ['npx', 'ts-node', '-r', 'tsconfig-paths/register', 'scripts/seed.ts', '--reset']
     depends_on:
       migrate:
         condition: service_completed_successfully
 
   api:
     <<: *app
-    command: ['npx', 'ts-node', 'src/api/index.ts']
+    command: ['npx', 'ts-node', '-r', 'tsconfig-paths/register', 'src/api/index.ts']
     environment:
       <<: *app-env
       PORT: '3000'
@@ -89,7 +89,7 @@ services:
 
   worker:
     <<: *app
-    command: ['npx', 'ts-node', 'src/worker/index.ts']
+    command: ['npx', 'ts-node', '-r', 'tsconfig-paths/register', 'src/worker/index.ts']
     environment:
       <<: *app-env
       # Three loops against a worker pool of three — see src/shared/config.ts, which refuses to

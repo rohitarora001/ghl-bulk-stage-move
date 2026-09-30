@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { getConfig } from '../shared/config';
+import { getConfig, readPrismaLogMode } from '@config';
 
 /**
  * Two clients, two roles, two pools — the whole app, not one pool per workspace.
@@ -17,17 +17,20 @@ import { getConfig } from '../shared/config';
  * concurrent bulk jobs.
  */
 
+/**
+ * Tests deliberately provoke permission-denied and statement-timeout errors, so they set
+ * PRISMA_LOG=silent to keep the suite's output pristine; the errors still reject.
+ */
+const LOG_LEVELS_BY_MODE = {
+  silent: [],
+  query: ['query', 'warn', 'error'],
+  default: ['warn', 'error'],
+} as const;
+
 function build(url: string): PrismaClient {
   return new PrismaClient({
     datasources: { db: { url } },
-    // Tests deliberately provoke permission-denied and statement-timeout errors, so they set
-    // PRISMA_LOG=silent to keep the suite's output pristine; the errors still reject.
-    log:
-      process.env.PRISMA_LOG === 'silent'
-        ? []
-        : process.env.PRISMA_LOG === 'query'
-          ? ['query', 'warn', 'error']
-          : ['warn', 'error'],
+    log: [...LOG_LEVELS_BY_MODE[readPrismaLogMode()]],
   });
 }
 

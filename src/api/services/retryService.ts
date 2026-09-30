@@ -1,4 +1,4 @@
-import { interactivePrisma } from '../../db/prismaClients';
+import { interactivePrisma } from '@shared/database';
 import { ApiError } from '../errors';
 
 /**

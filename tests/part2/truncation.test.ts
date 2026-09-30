@@ -1,4 +1,5 @@
 import request from 'supertest';
+import { resetConfigCache } from '@config';
 import { createApp } from '../../src/api/server';
 import {
   adminPrisma,
@@ -8,7 +9,6 @@ import {
   resetDb,
   type WorkspaceFixture,
 } from '../setup/testDb';
-import { resetConfigCache } from '../../src/shared/config';
 
 /**
  * A filter matching more than the cap is truncated rather than refused or silently widened, and

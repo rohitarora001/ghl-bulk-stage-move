@@ -49,21 +49,27 @@ interface SpawnedWorker {
  * kill. The shim would die and the worker would keep running.
  */
 function spawnWorker(): SpawnedWorker {
-  const child = spawn(process.execPath, ['-r', 'ts-node/register', WORKER_ENTRYPOINT], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      CHUNK_SIZE: String(CHUNK_SIZE),
-      WORKER_POOL_SIZE: '3',
-      SWEEP_INTERVAL_MS: '1000',
-      IDLE_BACKOFF_MS: '50',
-      PRISMA_LOG: 'silent',
-      // Type errors are the typecheck script's job; a full program check would add seconds to
-      // every spawn in this test.
-      TS_NODE_TRANSPILE_ONLY: 'true',
+  // `tsconfig-paths/register` too: the child resolves `@shared/*` and `@config` at runtime, and
+  // without it the worker dies on its first import instead of draining the job.
+  const child = spawn(
+    process.execPath,
+    ['-r', 'ts-node/register', '-r', 'tsconfig-paths/register', WORKER_ENTRYPOINT],
+    {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        CHUNK_SIZE: String(CHUNK_SIZE),
+        WORKER_POOL_SIZE: '3',
+        SWEEP_INTERVAL_MS: '1000',
+        IDLE_BACKOFF_MS: '50',
+        PRISMA_LOG: 'silent',
+        // Type errors are the typecheck script's job; a full program check would add seconds to
+        // every spawn in this test.
+        TS_NODE_TRANSPILE_ONLY: 'true',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
     },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  );
 
   const output: string[] = [];
   child.stdout?.on('data', (chunk: Buffer) => output.push(chunk.toString()));

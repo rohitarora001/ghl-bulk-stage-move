@@ -1,5 +1,5 @@
+import { resetConfigCache } from '@config';
 import { claimAndApplyChunk } from '../../src/worker/claimAndApplyChunk';
-import { resetConfigCache } from '../../src/shared/config';
 import { enrollFreshOpportunities } from '../setup/jobFixtures';
 import {
   adminPrisma,

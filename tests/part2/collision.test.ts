@@ -1,6 +1,6 @@
-import { claimAndApplyChunk } from '../../src/worker/claimAndApplyChunk';
+import { ConflictError } from '@shared/errors';
 import { moveOpportunity } from '../../src/api/services/opportunityService';
-import { ApiError } from '../../src/api/errors';
+import { claimAndApplyChunk } from '../../src/worker/claimAndApplyChunk';
 import { enrollFreshOpportunities } from '../setup/jobFixtures';
 import {
   adminPrisma,
@@ -115,8 +115,8 @@ describe('a manual move racing a running job', () => {
       expectedVersion: 1,
     });
 
-    await expect(stale).rejects.toMatchObject({ status: 409 });
-    await expect(stale).rejects.toBeInstanceOf(ApiError);
+    await expect(stale).rejects.toMatchObject({ statusCode: 409 });
+    await expect(stale).rejects.toBeInstanceOf(ConflictError);
     const row = await adminPrisma.opportunity.findUniqueOrThrow({ where: { id: target } });
     expect(row.stageId).toBe(fixture.stageIds[2]);
     expect(row.version).toBe(2);
@@ -134,6 +134,6 @@ describe('a manual move racing a running job', () => {
 
     // Moving a record into another tenant's pipeline stage is a data-isolation breach, not a
     // routine validation miss.
-    await expect(crossTenant).rejects.toMatchObject({ status: 400 });
+    await expect(crossTenant).rejects.toMatchObject({ statusCode: 400 });
   });
 });

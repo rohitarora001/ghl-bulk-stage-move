@@ -1,6 +1,6 @@
-import { disconnectAll } from '../db/prismaClients';
-import { getConfig } from '../shared/config';
-import { logger } from '../shared/logger';
+import { getConfig } from '@config';
+import { disconnectAll } from '@shared/database';
+import { logger } from '@shared/logger';
 import { createApp } from './server';
 
 const server = createApp().listen(getConfig().port, () => {

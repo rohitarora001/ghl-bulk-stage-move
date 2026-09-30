@@ -110,11 +110,15 @@ export function startService(
   entrypoint: string,
   env: Record<string, string> = {},
 ): Service {
-  const child = spawn(process.execPath, ['-r', 'ts-node/register', entrypoint], {
-    cwd: process.cwd(),
-    env: { ...process.env, TS_NODE_TRANSPILE_ONLY: 'true', ...env },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const child = spawn(
+    process.execPath,
+    ['-r', 'ts-node/register', '-r', 'tsconfig-paths/register', entrypoint],
+    {
+      cwd: process.cwd(),
+      env: { ...process.env, TS_NODE_TRANSPILE_ONLY: 'true', ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
   const output: string[] = [];
   child.stdout?.on('data', (chunk: Buffer) => output.push(chunk.toString()));
   child.stderr?.on('data', (chunk: Buffer) => output.push(chunk.toString()));

@@ -1,5 +1,5 @@
-import { applyTestEnv } from './env';
 import { migrate } from '../../scripts/migrate';
+import { applyTestEnv } from './env';
 
 /**
  * Brings the test database fully up to date once per suite run, through the same runner

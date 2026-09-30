@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
-import { disconnectAll, jobPrisma, sweepPrisma } from '../db/prismaClients';
-import { getConfig } from '../shared/config';
-import { logger } from '../shared/logger';
+import { getConfig } from '@config';
+import { disconnectAll, jobPrisma, sweepPrisma } from '@shared/database';
+import { logger } from '@shared/logger';
 import { claimAndApplyChunk } from './claimAndApplyChunk';
 import { pickJobWithClaimableWork, runFinalizeSweep, touchLastProgress } from './queries';
 

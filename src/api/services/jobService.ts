@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
-import { interactivePrisma } from '../../db/prismaClients';
-import { getConfig } from '../../shared/config';
+import { getConfig } from '@config';
+import { interactivePrisma } from '@shared/database';
 import { ApiError } from '../errors';
 import type { BulkMoveFilter } from '../schemas';
 

@@ -1,6 +1,6 @@
+import { resetConfigCache } from '@config';
 import { runLoop, runSweepLoop } from '../../src/worker/index';
 import { runFinalizeSweep } from '../../src/worker/queries';
-import { resetConfigCache } from '../../src/shared/config';
 import { enrollFreshOpportunities } from '../setup/jobFixtures';
 import {
   adminPrisma,
