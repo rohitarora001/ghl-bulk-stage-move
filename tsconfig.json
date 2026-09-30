@@ -24,6 +24,11 @@
       "@shared/*": ["src/shared/*"]
     }
   },
+  // ts-node compiles only what the entrypoint imports, so an ambient declaration file that
+  // nothing imports — `src/shared/types/express.d.ts` — is invisible to it, and `req.id` fails to
+  // compile at container start. `files` makes ts-node read the `include` list below, the way `tsc`
+  // and ts-jest already do. Without it the API starts locally and dies in Docker.
+  "ts-node": { "files": true },
   "include": ["src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

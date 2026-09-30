@@ -183,7 +183,17 @@ behavior exactly as it is today.
 6. **API shutdown has no forced-exit timer.** `server.close()` waits for idle sockets; a keep-alive
    client can hold the process past the grace period. `closeAllConnections()` is never called.
 7. **No `unhandledRejection` / `uncaughtException` handlers** in either entrypoint.
-8. **No error-code table in the README** — clients discover codes by triggering them.
+8. ~~**No error-code table in the README**~~ — closed in Phase 5; the table is in README.
+9. **The compose worker never runs its graceful shutdown.** Measured in the Phase 6 end-to-end run,
+   on Linux, which is the first time this path has actually been executed: `podman stop --time 15
+   gohighlevel-worker-1` produced **zero** `worker_shutdown` / `loop_stopped` / `sweeper_stopped`
+   lines and exit code **1**. The command is `['npx', 'ts-node', …]`, so `npx` is PID 1 and SIGTERM
+   kills the Node child without the handler in `app/worker.ts` ever running. Data is unaffected —
+   every item was `done`, nothing in limbo — so this is shutdown noise and a wrong exit code, not
+   correctness. It also settles the open question behind suspected bug 5: the drain is not slow,
+   it simply never starts. Fix would be `exec`-ing node directly (or an init) in the compose
+   command; deliberately not done here, because changing how the process is launched is a
+   behavior change.
 
 ## 6. Job idempotency review
 
@@ -466,10 +476,52 @@ reading, and the target structure's own `tests/ e2e / integration` is where they
 files that all pass would have been churn with a real chance of breaking the one suite that proves
 a killed worker resumes.
 
+## Defect found by the end-to-end run, and fixed
+
+**The API container would not start.** `ts-node` compiles only what the entrypoint imports, so
+`src/shared/types/express.d.ts` — an ambient declaration nothing imports — was invisible to it, and
+`requestId()`'s `req.id` failed to compile:
+
+```
+TSError: Unable to compile TypeScript:
+src/shared/middleware/requestId.ts(20,9): error TS2339:
+  Property 'id' does not exist on type 'Request<...>'
+```
+
+Every local gate stayed green because `tsc -p tsconfig.json` and ts-jest both read the `include`
+list, and the worker never touches a request. Only starting the real container caught it — which is
+the argument for running the stack rather than trusting a green suite.
+
+Fixed with `"ts-node": { "files": true }` in `tsconfig.json`, so ts-node reads the same `include`
+list as everything else. Introduced in Phase 1 with `requestId`; caught in Phase 6.
+
 ## Phase 6 — verification
 
 `npm run build`, `npm run typecheck`, `npm run lint` and `npm test` all clean at every phase
 boundary, and again at the end: **32 suites / 129 tests**.
+
+## Phase 6 — end-to-end run against the real stack
+
+`podman compose up --build` (podman, not docker — see the deviations), then live HTTP against the
+running containers. Everything below was executed, not reasoned about.
+
+| Check | Result |
+|---|---|
+| stack boots | `postgres`, `postgres-test` healthy; `migrate` and `seed` exit 0; `api` listening; worker logs 3 `loop_started` + `sweeper_started` |
+| compose suite | **32 suites / 129 tests passed** in-container, 55s; `api` and `worker` still up afterwards |
+| submit bulk move | `202` `{jobId, totalCount: 289, matchedCount: 289, truncated: false}` |
+| replay same key | `200`, same `jobId`, nothing enrolled twice |
+| same key, different filter | `409 idempotency_key_conflict` |
+| job drains | `completed`, `done: 289`, `pending/skippedConflict/failed: 0` |
+| rows actually moved | target stage 667 → 956; 289 transitions written for the job |
+| create opportunity | `201`, version 1, `value: 1234.56` round-tripped |
+| manual move | `200`, version 2 |
+| stale `expectedVersion` | `409 version_conflict` with `{expectedVersion: 1, currentVersion: 2}` |
+| keyset page | 2 items + opaque `nextCursor` |
+| error taxonomy | all 13 probes returned the README's code and status, live |
+| kill the worker | no limbo: every item `done` or `pending`, never half-applied |
+| restart the worker | job reaches `completed`; transitions == done items (956 == 956), so nothing applied twice |
+| SIGTERM drain | **found a pre-existing defect** — see suspected bug 9 |
 
 ## 12. Parity checklist
 
