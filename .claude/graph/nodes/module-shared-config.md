@@ -84,3 +84,17 @@ Also: `dist/` is never cleaned by `tsc`, and was still carrying `dist/src/api/` 
 `dist/src/worker/` from before the refactor. `rm -rf dist` before a release build, or the shipped
 output contains modules that no longer exist in source.
 
+## isolatedModules (commit 6140b43)
+
+`module: node16` made ts-jest emit **TS151002 on every suite** — 84 warnings in one container run —
+because a hybrid module kind is only supported with `isolatedModules: true`. Tests passed
+throughout, so it was noise, but a green run has to look green (same reason the suite sets
+`PRISMA_LOG=silent`).
+
+`isolatedModules: true` also describes what was already true: ts-jest compiles each file on its
+own. Nothing had to change to satisfy it — type-only re-exports already use `export type`, which
+the `consistent-type-imports` lint rule enforces.
+
+Gotcha: this warning only appears where ts-jest runs, so it is invisible to `npm run typecheck`
+and `npm run build`. It surfaced in a compose test run.
+
