@@ -18,6 +18,9 @@ export function applyTestEnv(): void {
   process.env.DATABASE_URL_ADMIN ??= TEST_ADMIN_URL;
   process.env.DATABASE_URL_INTERACTIVE ??= TEST_INTERACTIVE_URL;
   process.env.DATABASE_URL_WORKER ??= TEST_WORKER_URL;
+  // Several tests assert on rejected queries (permission denied, statement timeout); Prisma
+  // would otherwise print each one to the console and make a green run look alarming.
+  process.env.PRISMA_LOG ??= 'silent';
   // Prisma's CLI only ever reads `DATABASE_URL`; the app never does.
   process.env.DATABASE_URL ??= process.env.DATABASE_URL_ADMIN;
 }

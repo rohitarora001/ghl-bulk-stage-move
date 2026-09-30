@@ -1,16 +1,13 @@
-import { execFileSync } from 'node:child_process';
 import { applyTestEnv } from './env';
+import { migrate } from '../../scripts/migrate';
 
 /**
- * Brings the test database's schema up to date once per suite run. `migrate deploy` (not
- * `migrate dev`) so it applies committed migrations exactly as production would, including the
- * hand-added partial indexes.
+ * Brings the test database fully up to date once per suite run, through the same runner
+ * production uses: roles first, then `prisma migrate deploy`, then grants. Calling `migrate
+ * deploy` directly here would leave `app_interactive`/`app_worker` missing, and every test that
+ * touches the two capped clients would fail on authentication rather than on its own subject.
  */
-export default function globalSetup(): void {
+export default async function globalSetup(): Promise<void> {
   applyTestEnv();
-  execFileSync('npx', ['prisma', 'migrate', 'deploy'], {
-    stdio: 'inherit',
-    shell: process.platform === 'win32',
-    env: { ...process.env, DATABASE_URL: process.env.DATABASE_URL_ADMIN },
-  });
+  await migrate();
 }
