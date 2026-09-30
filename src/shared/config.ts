@@ -22,6 +22,7 @@ export interface Config {
   sweepIntervalMs: number;
   idleBackoffMs: number;
   claimBackoffMs: number;
+  stuckAfterMs: number;
 }
 
 const positiveInt = (fallback: number) =>
@@ -39,6 +40,9 @@ const schema = z.object({
   SWEEP_INTERVAL_MS: positiveInt(2000),
   IDLE_BACKOFF_MS: positiveInt(250),
   CLAIM_BACKOFF_MS: positiveInt(500),
+  // Longer than the worst backoff a healthy job serves (2^5s at MAX_ATTEMPTS=5), so a job that
+  // is merely waiting out its own retries is never reported as needing a human.
+  STUCK_AFTER_MS: positiveInt(60000),
 });
 
 /** Reads `connection_limit` off a Prisma connection string, or null when it is absent. */
@@ -95,6 +99,7 @@ export function loadConfig(env: NodeJS.ProcessEnv | Record<string, string | unde
     maxAttempts: parsed.MAX_ATTEMPTS,
     sweepIntervalMs: parsed.SWEEP_INTERVAL_MS,
     idleBackoffMs: parsed.IDLE_BACKOFF_MS,
+    stuckAfterMs: parsed.STUCK_AFTER_MS,
     claimBackoffMs: parsed.CLAIM_BACKOFF_MS,
   };
 }

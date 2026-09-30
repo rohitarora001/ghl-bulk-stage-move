@@ -35,3 +35,6 @@ export const bulkMoveBodySchema = z
 
 export type BulkMoveFilter = z.infer<typeof bulkMoveFilterSchema>;
 export type BulkMoveBody = z.infer<typeof bulkMoveBodySchema>;
+
+/** Guards the `:id` path param: an unparseable id must be a 400, not a Postgres cast error. */
+export const jobIdParamSchema = z.object({ id: uuid }).strict();

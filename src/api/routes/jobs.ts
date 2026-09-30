@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { ApiError } from '../errors';
-import { bulkMoveBodySchema } from '../schemas';
+import { bulkMoveBodySchema, jobIdParamSchema } from '../schemas';
 import { submitBulkMoveJob } from '../services/jobService';
+import { getJobProgress } from '../services/progressService';
+import { retryFailedItems } from '../services/retryService';
 
 export function jobsRouter(): Router {
   const router = Router();
@@ -34,6 +36,36 @@ export function jobsRouter(): Router {
           matchedCount: result.matchedCount,
           truncated: result.truncated,
         });
+      })
+      .catch(next);
+  });
+
+  router.get('/jobs/:id', (req, res, next) => {
+    const parsed = jobIdParamSchema.safeParse(req.params);
+    if (!parsed.success) {
+      next(ApiError.badRequest('invalid_job_id', 'job id must be a uuid'));
+      return;
+    }
+
+    getJobProgress(req.workspaceId, parsed.data.id)
+      .then((progress) => {
+        res.status(200).json(progress);
+      })
+      .catch(next);
+  });
+
+  // No Idempotency-Key: the operation is naturally idempotent. A second call finds no failed
+  // items and flips nothing, which is the same end state as calling once.
+  router.post('/jobs/:id/retry-failed', (req, res, next) => {
+    const parsed = jobIdParamSchema.safeParse(req.params);
+    if (!parsed.success) {
+      next(ApiError.badRequest('invalid_job_id', 'job id must be a uuid'));
+      return;
+    }
+
+    retryFailedItems(req.workspaceId, parsed.data.id)
+      .then((result) => {
+        res.status(200).json(result);
       })
       .catch(next);
   });
