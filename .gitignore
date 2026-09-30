@@ -5,4 +5,6 @@ coverage/
 .env.local
 *.log
 .worktrees/
-.claude/
+# The memory graph is shared: it carries the architecture decisions and the engineering
+# guidelines. Local machine state is not.
+.claude/settings.local.json

@@ -1,0 +1,232 @@
+{
+  "project": "ghl-bulk-stage-move",
+  "lastUpdated": "2026-09-30",
+  "contextNodeCap": 7,
+  "nodes": [
+    {
+      "id": "config-repo-scaffold",
+      "type": "config",
+      "layer": "devops",
+      "status": "in-progress",
+      "file": "nodes/config-repo-scaffold.md"
+    },
+    {
+      "id": "decision-execution-plan",
+      "type": "decision",
+      "layer": "backend",
+      "status": "complete",
+      "file": "nodes/decision-execution-plan.md"
+    },
+    {
+      "id": "module-shared-config",
+      "type": "module",
+      "layer": "backend",
+      "status": "complete",
+      "file": "nodes/module-shared-config.md"
+    },
+    {
+      "id": "module-db-schema",
+      "type": "module",
+      "layer": "backend",
+      "status": "in-progress",
+      "file": "nodes/module-db-schema.md"
+    },
+    {
+      "id": "module-db-isolation",
+      "type": "module",
+      "layer": "backend",
+      "status": "complete",
+      "file": "nodes/module-db-isolation.md"
+    },
+    {
+      "id": "module-seed",
+      "type": "module",
+      "layer": "backend",
+      "status": "complete",
+      "file": "nodes/module-seed.md"
+    },
+    {
+      "id": "module-api-submission",
+      "type": "module",
+      "layer": "backend",
+      "status": "complete",
+      "file": "nodes/module-api-submission.md"
+    },
+    {
+      "id": "module-worker",
+      "type": "module",
+      "layer": "backend",
+      "status": "complete",
+      "file": "nodes/module-worker.md"
+    },
+    {
+      "id": "module-api-observability",
+      "type": "module",
+      "layer": "backend",
+      "status": "complete",
+      "file": "nodes/module-api-observability.md"
+    },
+    {
+      "id": "module-api-part1",
+      "type": "module",
+      "layer": "backend",
+      "status": "complete",
+      "file": "nodes/module-api-part1.md"
+    },
+    {
+      "id": "module-docker-compose",
+      "type": "module",
+      "layer": "devops",
+      "status": "complete",
+      "file": "nodes/module-docker-compose.md"
+    },
+    {
+      "id": "module-benchmarks",
+      "type": "module",
+      "layer": "backend",
+      "status": "complete",
+      "file": "nodes/module-benchmarks.md"
+    },
+    {
+      "id": "docs-design-readme",
+      "type": "docs",
+      "layer": "backend",
+      "status": "complete",
+      "file": "nodes/docs-design-readme.md"
+    },
+    {
+      "id": "decision-modular-refactor",
+      "type": "decision",
+      "layer": "backend",
+      "status": "in-progress",
+      "file": "nodes/decision-modular-refactor.md"
+    }
+  ],
+  "edges": [
+    {
+      "from": "decision-execution-plan",
+      "to": "config-repo-scaffold",
+      "relation": "depends-on"
+    },
+    {
+      "from": "module-shared-config",
+      "to": "decision-execution-plan",
+      "relation": "related-to"
+    },
+    {
+      "from": "module-db-schema",
+      "to": "module-shared-config",
+      "relation": "depends-on"
+    },
+    {
+      "from": "module-db-isolation",
+      "to": "module-db-schema",
+      "relation": "depends-on"
+    },
+    {
+      "from": "module-db-isolation",
+      "to": "module-shared-config",
+      "relation": "depends-on"
+    },
+    {
+      "from": "module-seed",
+      "to": "module-db-schema",
+      "relation": "depends-on"
+    },
+    {
+      "from": "module-seed",
+      "to": "config-repo-scaffold",
+      "relation": "related-to"
+    },
+    {
+      "from": "module-api-submission",
+      "to": "module-db-schema",
+      "relation": "depends-on"
+    },
+    {
+      "from": "module-api-submission",
+      "to": "module-db-isolation",
+      "relation": "depends-on"
+    },
+    {
+      "from": "module-api-submission",
+      "to": "module-shared-config",
+      "relation": "depends-on"
+    },
+    {
+      "from": "module-api-submission",
+      "to": "module-seed",
+      "relation": "related-to"
+    },
+    {
+      "from": "module-worker",
+      "to": "module-db-schema",
+      "relation": "depends-on"
+    },
+    {
+      "from": "module-worker",
+      "to": "module-db-isolation",
+      "relation": "depends-on"
+    },
+    {
+      "from": "module-worker",
+      "to": "module-shared-config",
+      "relation": "depends-on"
+    },
+    {
+      "from": "module-worker",
+      "to": "module-api-submission",
+      "relation": "related-to"
+    },
+    {
+      "from": "module-api-observability",
+      "to": "module-db-schema",
+      "relation": "depends-on"
+    },
+    {
+      "from": "module-api-observability",
+      "to": "module-db-isolation",
+      "relation": "depends-on"
+    },
+    {
+      "from": "module-api-observability",
+      "to": "module-shared-config",
+      "relation": "depends-on"
+    },
+    {
+      "from": "module-api-observability",
+      "to": "module-api-submission",
+      "relation": "related-to"
+    },
+    {
+      "from": "module-api-observability",
+      "to": "module-worker",
+      "relation": "related-to"
+    },
+    {
+      "from": "module-api-part1",
+      "to": "module-db-schema",
+      "relation": "depends-on"
+    },
+    {
+      "from": "module-api-part1",
+      "to": "module-db-isolation",
+      "relation": "depends-on"
+    },
+    {
+      "from": "module-api-part1",
+      "to": "module-shared-config",
+      "relation": "depends-on"
+    },
+    {
+      "from": "module-api-part1",
+      "to": "module-api-submission",
+      "relation": "related-to"
+    },
+    {
+      "from": "module-api-part1",
+      "to": "module-api-observability",
+      "relation": "related-to"
+    }
+  ]
+}
