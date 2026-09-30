@@ -167,9 +167,10 @@ dishonest naming). Layer rules that are not machine-checked decay.
 Carried forward from the pre-refactor code review plus this audit. The refactor preserves each
 behavior exactly as it is today.
 
-1. **`schemas.ts` date range compares raw ISO strings.** `createdFrom`/`createdTo` refine with `<=`
-   on strings, so a valid range expressed with a non-`Z` offset is rejected 400 and an inverted one
-   is accepted (silently empty result set). Fix would be `Date.parse` inside the refine.
+1. ~~**`schemas.ts` date range compares raw ISO strings.**~~ **Fixed.** Reproduced first: a valid
+   window (`23:00+05:30` → `18:00Z`) was rejected 400, and an inverted one (`10:00Z` →
+   `11:00+05:30`) was accepted 202. The refine now compares `Date.parse` values. Covered by
+   `tests/part2/filterFields.test.ts` and verified by hand against a running API.
 2. **`schemas.ts` `value` has no scale constraint.** The column is `numeric(14,2)`; `10.555` is
    accepted, then stored and echoed as `10.56`. Money that quietly changes.
 3. **`config.ts` comment overstates the worst backoff.** Says `2^5s at MAX_ATTEMPTS=5`; a row at

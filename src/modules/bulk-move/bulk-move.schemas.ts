@@ -21,9 +21,15 @@ export const bulkMoveFilterSchema = z
   .refine((f) => f.valueMin === undefined || f.valueMax === undefined || f.valueMin <= f.valueMax, {
     message: 'valueMin must not exceed valueMax',
   })
-  .refine((f) => !f.createdFrom || !f.createdTo || f.createdFrom <= f.createdTo, {
-    message: 'createdFrom must not be after createdTo',
-  });
+  .refine(
+    (f) => !f.createdFrom || !f.createdTo || Date.parse(f.createdFrom) <= Date.parse(f.createdTo),
+    {
+      // Instants, not strings. `2025-06-15T23:00:00+05:30` is 17:30Z and therefore *before*
+      // `2025-06-15T18:00:00Z`, but a character comparison reads '23…' as greater than '18…' and
+      // rejects a valid window — while waving through an inverted one written the other way round.
+      message: 'createdFrom must not be after createdTo',
+    },
+  );
 
 export const bulkMoveBodySchema = z
   .object({

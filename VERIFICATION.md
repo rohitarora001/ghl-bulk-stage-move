@@ -118,6 +118,42 @@ against a neighbour tenant's, because the worker's `connection_limit` caps what 
 
 ---
 
+## 4. Bulk filter fields, driven by hand
+
+The brief names five filter categories: stage, owner, status, value range, date range. `stageId`
+and `status` were exercised throughout the suite; the other three had no coverage at all until
+`tests/part2/filterFields.test.ts` was added. Each was then also driven by hand against a running
+API, over six rows differing in exactly one dimension each.
+
+| Filter | Enrolled |
+|---|---|
+| `ownerId` = alice | 5 — every alice row, no bob row |
+| `ownerId` = bob | 1 — `bob-500` |
+| `valueMin: 100, valueMax: 1000` | 5 — boundaries inclusive, `alice-5000` excluded |
+| `valueMin: 5000` | 1 — `alice-5000` |
+| `status: won` | 1 — `alice-won` |
+| `createdFrom/To` covering 2025+ | 5 — the 2024 row excluded |
+| `createdFrom/To` covering pre-2025 | 1 — only the 2024 row |
+| all five together | 2 — one row rejected on each of the other four dimensions |
+
+### Adversarial input
+
+| Input | Answer |
+|---|---|
+| valid range, mixed offsets (`23:00+05:30` → `18:00Z`) | 202 — **was 400 before the fix below** |
+| inverted range, mixed offsets (`10:00Z` → `11:00+05:30`) | 400 `invalid_body` — **was 202** |
+| plainly inverted range (Jul → Jun) | 400 |
+| `valueMin` above `valueMax` | 400 |
+| unknown filter key | 400 (the schema is `.strict()`) |
+| `ownerId` not a uuid | 400 |
+| `createdFrom: "yesterday"` | 400 |
+| `valueMin: -5` | 202, enrols everything — a negative floor is a legitimate no-op |
+
+**A defect was found and fixed here.** The date refine compared the two ISO strings character by
+character, so `2025-06-15T23:00:00+05:30` (17:30Z) read as *after* `2025-06-15T18:00:00Z`. A valid
+window was rejected and an inverted one accepted. It survived this long because it sat in the one
+part of the filter nothing exercised. The refine now compares `Date.parse` values.
+
 ## Known gaps in this log
 
 - **The mid-flight kill in section 1 drained before the kill landed**, so the container test proves
