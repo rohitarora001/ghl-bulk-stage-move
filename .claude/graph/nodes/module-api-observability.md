@@ -61,3 +61,20 @@ skippedConflict, failed }, backedOff, lastProgressAt, errorMessage, classificati
 live in `modules/bulk-move/bulk-move.repository.ts`; `classify()` and the `JobNotFoundError` throw
 live in `bulk-move.service.ts`. Same single-statement aggregate, same LEFT JOIN, same
 `STUCK_AFTER_MS` semantics, same response shape.
+
+## All five classifications verified live (commit 7428be7)
+
+Previously only `running` and `completed` had been seen against a real stack. The other three need
+a genuinely failing item, produced by enrolling one opportunity on its own stage with the worker
+stopped, then inserting a job-attributed transition for it so the chunk apply violates
+`transitions_job_opportunity_uq`:
+
+- **stuck** — claimable work, no worker, past `STUCK_AFTER_MS`
+- **backing_off** — worker restarted, item failing and waiting out its backoff
+- **failed** — after `MAX_ATTEMPTS`: `counts.failed: 1`, `errorMessage` set, `attempts: 5`
+- **retry-failed with work to do** — `retriedCount: 1`, attempts reset to 0, job back to `running`,
+  then `completed`
+
+Gotcha for anyone repeating this: the item is `pending` only between the retry response and the
+worker claiming it, so that intermediate state is **not observable with a live worker** — the
+worker wins the race. Assert it with the worker stopped, as `tests/part2/retryFailed.test.ts` does.

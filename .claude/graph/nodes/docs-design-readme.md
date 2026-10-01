@@ -125,3 +125,12 @@ Records the by-hand filter pass: six rows differing in exactly one dimension eac
 selecting the expected rows by name, the five-way conjunction rejecting one row per dimension, and
 eight adversarial inputs — two of which answered the opposite way before the date fix in
 [[module-api-submission]].
+
+## VERIFICATION.md section 5 (commit 7428be7)
+
+The full curl pass against the containerised stack — Postgres, API and worker all in containers.
+**41 checks, 41 passed**, covering every endpoint and every error branch, including the ones that
+had been suite-only: 1.2 MB body → 413, create with a stage outside its pipeline, move targeting
+another pipeline or tenant, the same-stage no-op that does not bump the version, unknown
+opportunity → 404, and the three bulk-move stage errors. Plus the four classification states — see
+[[module-api-observability]].
