@@ -154,6 +154,44 @@ character, so `2025-06-15T23:00:00+05:30` (17:30Z) read as *after* `2025-06-15T1
 window was rejected and an inverted one accepted. It survived this long because it sat in the one
 part of the filter nothing exercised. The refine now compares `Date.parse` values.
 
+## 5. Full curl pass against the containerised stack
+
+Postgres, API and worker all in containers (`docker compose up --build`), driven entirely by curl.
+**41 checks, 41 passed** — every endpoint and every error branch:
+
+- **create**: 201; stage outside the named pipeline, another tenant's stage, negative value → 400
+- **move**: 200 with the version bump; move to the same stage is a no-op that does *not* bump;
+  stale `expectedVersion` → 409; target in another pipeline or tenant → 400; unknown id → 404;
+  the manual transition is written with `job_id IS NULL`
+- **listing**: page of 5; another tenant's stage → 404; bad cursor → 400; limit over max → 400
+- **bulk-move**: 202; replay returns the same job; same key with a different request → 409; target
+  or filter stage in another tenant → 400; cross-pipeline → 400; missing key → 400; 300-character
+  key → 400; malformed JSON → 400; **1.2 MB body → 413**
+- **progress**: drains to `completed` with done == enrolled == transitions (1,180); another
+  tenant → 404; bad id → 400
+- **retry-failed**: 200 `retriedCount: 0`; another tenant → 404
+- **routing**: unknown route → 404; the four workspace-header branches → 400
+
+### The classification states, with a genuinely failing item
+
+A single opportunity on its own stage, enrolled while the worker was stopped, then poisoned with a
+pre-existing job-attributed transition so its chunk apply violates
+`transitions_job_opportunity_uq`:
+
+| Check | Result |
+|---|---|
+| claimable work, no worker, past `STUCK_AFTER_MS` | `classification: stuck` |
+| worker restarted, item failing and backing off | `backing_off` observed |
+| after `MAX_ATTEMPTS` | `failed`, `counts.failed: 1`, `errorMessage` set, `attempts: 5` |
+| `retry-failed` after removing the poison | `retriedCount: 1`, attempts reset to 0, job back to `running` |
+| job afterwards | `completed`, item `done` |
+
+One assertion in that run — "item is `pending` immediately after the retry" — could not be observed
+with the worker live: it claimed and applied the item between the retry response and the next
+query. The three facts around it (`retriedCount: 1`, `attempts: 0`, job `running`) are only
+reachable through that state, and `tests/part2/retryFailed.test.ts` asserts it directly with the
+worker stopped.
+
 ## Known gaps in this log
 
 - **The mid-flight kill in section 1 drained before the kill landed**, so the container test proves
