@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bulk Stage Move — how the whole thing works</title>
+    <style>
+      :root {
+        --bg: #0b0d12;
+        --panel: #12151d;
+        --panel-2: #171b25;
+        --line: #232838;
+        --ink: #e7eaf2;
+        --ink-dim: #9aa3b8;
+        --ink-faint: #6b7489;
+        --accent: #6ea8fe;
+        --good: #5ddba4;
+        --warn: #f5c76e;
+        --bad: #f58e8e;
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      }
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font: 16px/1.65 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      a { color: var(--accent); }
+      .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+      code, .mono { font-family: var(--mono); font-size: 0.9em; }
+      code.file {
+        color: var(--accent);
+        background: #121829;
+        border: 1px solid #1e2740;
+        border-radius: 5px;
+        padding: 1px 6px;
+        white-space: nowrap;
+      }
+      h1, h2, h3 { line-height: 1.2; letter-spacing: -0.02em; margin: 0; }
+      h1 { font-size: clamp(34px, 6vw, 60px); font-weight: 700; }
+      h2 { font-size: clamp(24px, 3.6vw, 34px); font-weight: 650; }
+      h3 { font-size: 19px; font-weight: 620; }
+      p { margin: 14px 0; color: var(--ink-dim); }
+      p strong, li strong { color: var(--ink); font-weight: 600; }
+      section { padding: 72px 0; border-top: 1px solid var(--line); }
+      section:first-of-type { border-top: 0; }
+      .eyebrow {
+        font: 600 12px/1 var(--mono);
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--ink-faint);
+        margin-bottom: 14px;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 22px 24px;
+      }
+      .grid { display: grid; gap: 16px; }
+      .g2 { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+      .g3 { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+      .donkey {
+        background: linear-gradient(180deg, #16120a, #141009);
+        border: 1px solid #3a2f16;
+        border-left: 3px solid var(--warn);
+        border-radius: 12px;
+        padding: 16px 20px;
+        margin: 20px 0;
+      }
+      .donkey .tag {
+        font: 700 11px/1 var(--mono);
+        letter-spacing: 0.12em;
+        color: var(--warn);
+        text-transform: uppercase;
+      }
+      .donkey p { margin: 8px 0 0; color: #e9dcc0; }
+      table { width: 100%; border-collapse: collapse; margin: 18px 0; font-size: 14.5px; }
+      th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+      th { color: var(--ink-faint); font: 600 12px/1.4 var(--mono); text-transform: uppercase; letter-spacing: 0.08em; }
+      td { color: var(--ink-dim); }
+      .num { font-family: var(--mono); color: var(--ink); }
+      ul { color: var(--ink-dim); padding-left: 20px; }
+      li { margin: 7px 0; }
+      .pill {
+        display: inline-block; font: 600 11px/1 var(--mono); padding: 5px 9px;
+        border-radius: 999px; border: 1px solid var(--line); color: var(--ink-dim);
+      }
+      .pill.ok { color: var(--good); border-color: #1d4435; background: #0f1f19; }
+      .pill.no { color: var(--bad); border-color: #4a2626; background: #1d1111; }
+      svg { width: 100%; height: auto; display: block; }
+      .lbl { font: 600 12px var(--mono); fill: var(--ink); }
+      .lbl-sm { font: 500 10.5px var(--mono); fill: var(--ink-faint); }
+      .lbl-file { font: 500 10.5px var(--mono); fill: var(--accent); }
+      nav.toc {
+        position: sticky; top: 0; z-index: 20; backdrop-filter: blur(10px);
+        background: rgba(11,13,18,0.82); border-bottom: 1px solid var(--line);
+      }
+      nav.toc .wrap { display: flex; gap: 18px; overflow-x: auto; padding-top: 12px; padding-bottom: 12px; }
+      nav.toc a { color: var(--ink-faint); text-decoration: none; font: 600 12px/1 var(--mono); white-space: nowrap; }
+      nav.toc a:hover { color: var(--ink); }
+      footer { padding: 60px 0 100px; color: var(--ink-faint); font-size: 14px; }
+      .kpi { font: 700 30px/1 var(--mono); color: var(--ink); }
+      .kpi-l { font-size: 12.5px; color: var(--ink-faint); margin-top: 6px; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "https://esm.sh/react@18.3.1",
+          "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+          "framer-motion": "https://esm.sh/framer-motion@11.3.24?external=react",
+          "htm/react": "https://esm.sh/htm@3.1.1/react?external=react"
+        }
+      }
+    </script>
+
+    <script type="module">
+      import React from 'react';
+      import { createRoot } from 'react-dom/client';
+      import { motion } from 'framer-motion';
+      import { html } from 'htm/react';
+
+      const M = motion;
+
+      /* Everything animates the same way: fade up as it enters the viewport, once. */
+      const rise = (i = 0) => ({
+        initial: { opacity: 0, y: 22 },
+        whileInView: { opacity: 1, y: 0 },
+        viewport: { once: true, margin: '-60px' },
+        transition: { duration: 0.5, delay: i * 0.07, ease: [0.22, 1, 0.36, 1] },
+      });
+
+      const File = ({ children }) => html`<code class="file">${children}</code>`;
+
+      const Donkey = ({ children }) => html`
+        <${M.div} class="donkey" ...${rise()}>
+          <div class="tag">Explain it like I'm a donkey</div>
+          ${children}
+        <//>`;
+
+      const Section = ({ id, eyebrow, title, children }) => html`
+        <section id=${id}>
+          <div class="wrap">
+            <${M.div} ...${rise()}>
+              <div class="eyebrow">${eyebrow}</div>
+              <h2>${title}</h2>
+            <//>
+            ${children}
+          </div>
+        </section>`;
+
+      /* ---------- diagram helpers ---------- */
+      const Box = ({ x, y, w = 150, h = 54, fill = '#171b25', stroke = '#232838', title, file, i = 0 }) => html`
+        <${M.g}
+          initial=${{ opacity: 0, scale: 0.94 }}
+          whileInView=${{ opacity: 1, scale: 1 }}
+          viewport=${{ once: true }}
+          transition=${{ duration: 0.4, delay: i * 0.06 }}>
+          <rect x=${x} y=${y} width=${w} height=${h} rx="9" fill=${fill} stroke=${stroke} />
+          <text class="lbl" x=${x + 12} y=${y + (file ? 22 : 31)}>${title}</text>
+          ${file && html`<text class="lbl-file" x=${x + 12} y=${y + 39}>${file}</text>`}
+        <//>`;
+
+      const Path = ({ d, i = 0, color = '#39405a', dash }) => html`
+        <${M.path}
+          d=${d} fill="none" stroke=${color} stroke-width="1.6"
+          stroke-dasharray=${dash || undefined}
+          marker-end="url(#arrow)"
+          initial=${{ pathLength: 0, opacity: 0 }}
+          whileInView=${{ pathLength: 1, opacity: 1 }}
+          viewport=${{ once: true }}
+          transition=${{ duration: 0.7, delay: 0.2 + i * 0.1 }} />`;
+
+      const Defs = () => html`
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#4a5375" />
+          </marker>
+        </defs>`;
+
+      /* ---------- diagrams ---------- */
+
+      const LayerDiagram = () => html`
+        <${M.div} class="card" style=${{ marginTop: 22 }} ...${rise(1)}>
+          <svg viewBox="0 0 900 430" role="img" aria-label="Layered architecture">
+            <${Defs} />
+            <text class="lbl-sm" x="20" y="22">HTTP</text>
+            <${Box} x="20"  y="34"  w="190" title="routes" file="*.routes.ts" i=${0} />
+            <${Box} x="240" y="34"  w="190" title="controller" file="*.controller.ts" i=${1} />
+            <${Box} x="460" y="34"  w="190" title="service" file="*.service.ts" i=${2} />
+            <${Box} x="680" y="34"  w="190" title="repository" file="*.repository.ts" i=${3} />
+            <${Path} d="M 212 61 L 236 61" i=${0} />
+            <${Path} d="M 432 61 L 456 61" i=${1} />
+            <${Path} d="M 652 61 L 676 61" i=${2} />
+
+            <text class="lbl-sm" x="20" y="132">one rule per arrow — enforced by eslint.config.mjs</text>
+            <${Box} x="20" y="146" w="410" h="74" title="validate() + schemas" file="shared/middleware/validate.ts" i=${4} />
+            <${Box} x="460" y="146" w="410" h="74" title="errors thrown here, never res.status()" file="shared/errors/" i=${5} />
+
+            <text class="lbl-sm" x="20" y="256">composition root — builds everything, owns nothing</text>
+            <${Box} x="20"  y="270" w="270" title="container.ts" file="src/app/container.ts" i=${6} />
+            <${Box} x="315" y="270" w="270" title="createApp.ts" file="src/app/createApp.ts" i=${7} />
+            <${Box} x="610" y="270" w="260" title="server.ts / worker.ts" file="src/app/" i=${8} />
+            <${Path} d="M 292 297 L 311 297" i=${3} />
+            <${Path} d="M 587 297 L 606 297" i=${4} />
+
+            <${Box} x="20" y="356" w="850" h="54" fill="#101522" stroke="#1d2435"
+              title="PostgreSQL 16  —  jobs · job_items · opportunities · transitions" i=${9} />
+            <${Path} d="M 775 92 L 775 352" i=${5} />
+          </svg>
+        <//>`;
+
+      const JobDiagram = () => html`
+        <${M.div} class="card" style=${{ marginTop: 22 }} ...${rise(1)}>
+          <svg viewBox="0 0 900 470" role="img" aria-label="Job lifecycle">
+            <${Defs} />
+            <text class="lbl-sm" x="20" y="20">1 — submission, synchronous, one transaction</text>
+            <${Box} x="20"  y="32" w="250" title="POST /jobs/bulk-move" file="bulk-move.routes.ts" i=${0} />
+            <${Box} x="300" y="32" w="250" title="snapshot the match set" file="bulk-move.repository.ts" i=${1} />
+            <${Box} x="580" y="32" w="290" title="INSERT jobs + INSERT job_items" file="one CTE, no ids over the wire" i=${2} />
+            <${Path} d="M 272 59 L 296 59" i=${0} />
+            <${Path} d="M 552 59 L 576 59" i=${1} />
+
+            <text class="lbl-sm" x="20" y="146">2 — the worker, N identical loops, no coordinator</text>
+            <${Box} x="20"  y="158" w="250" title="pickJob()" file="bulk-move.worker.repository.ts" i=${3} />
+            <${Box} x="300" y="158" w="250" title="processChunk()" file="bulk-move.worker.service.ts" i=${4} />
+            <${Box} x="580" y="158" w="290" title="touchProgress()" file="jobs/bulk-stage-move.processor.ts" i=${5} />
+            <${Path} d="M 272 185 L 296 185" i=${2} />
+            <${Path} d="M 552 185 L 576 185" i=${3} />
+            <${Path} d="M 725 212 C 725 250, 145 250, 145 212" i=${4} dash="4 4" />
+            <text class="lbl-sm" x="380" y="248">loop forever</text>
+
+            <text class="lbl-sm" x="20" y="300">3 — inside one chunk transaction</text>
+            <${Box} x="20"  y="312" w="200" h="48" title="claim ≤ 500" file="FOR UPDATE SKIP LOCKED" i=${6} />
+            <${Box} x="240" y="312" w="200" h="48" title="lock rows" file="ORDER BY id FOR UPDATE" i=${7} />
+            <${Box} x="460" y="312" w="200" h="48" title="version check" file="expected_version" i=${8} />
+            <${Box} x="680" y="312" w="190" h="48" title="apply + audit" file="transitions" i=${9} />
+            <${Path} d="M 222 336 L 236 336" i=${5} />
+            <${Path} d="M 442 336 L 456 336" i=${6} />
+            <${Path} d="M 662 336 L 676 336" i=${7} />
+
+            <${Box} x="20" y="392" w="410" h="56" fill="#101c17" stroke="#1d4435"
+              title="match → done" file="version unchanged, row moved" i=${10} />
+            <${Box} x="460" y="392" w="410" h="56" fill="#1d1111" stroke="#4a2626"
+              title="mismatch → skipped_conflict" file="a human got there first; job stands down" i=${11} />
+          </svg>
+        <//>`;
+
+      const CursorDiagram = () => html`
+        <${M.div} class="card" style=${{ marginTop: 22 }} ...${rise(1)}>
+          <svg viewBox="0 0 900 220" role="img" aria-label="job_items is the cursor">
+            <${Defs} />
+            <text class="lbl-sm" x="20" y="20">job_items — one row per enrolled opportunity. status IS the cursor.</text>
+            ${[0, 1, 2, 3, 4, 5, 6, 7].map((n, i) => {
+              const done = n < 3, inflight = n === 3;
+              return html`<${M.g} key=${n}
+                initial=${{ opacity: 0, y: 10 }} whileInView=${{ opacity: 1, y: 0 }}
+                viewport=${{ once: true }} transition=${{ duration: 0.35, delay: i * 0.06 }}>
+                <rect x=${20 + n * 108} y="40" width="96" height="58" rx="8"
+                  fill=${done ? '#0f1f19' : inflight ? '#16120a' : '#171b25'}
+                  stroke=${done ? '#1d4435' : inflight ? '#3a2f16' : '#232838'} />
+                <text class="lbl" x=${34 + n * 108} y="64">#${n + 1}</text>
+                <text class="lbl-sm" x=${34 + n * 108} y="84"
+                  fill=${done ? '#5ddba4' : inflight ? '#f5c76e' : '#6b7489'}>
+                  ${done ? 'done' : inflight ? 'in chunk' : 'pending'}
+                </text>
+              <//>`;
+            })}
+            <${Path} d="M 365 118 L 365 150" i=${0} />
+            <text class="lbl-sm" x="200" y="172">kill the process here — the open transaction rolls back</text>
+            <text class="lbl-sm" x="200" y="192" fill="#5ddba4">#4 returns to pending. Nothing half-applied. No offset to repair.</text>
+          </svg>
+        <//>`;
+
+      const IsolationDiagram = () => html`
+        <${M.div} class="card" style=${{ marginTop: 22 }} ...${rise(1)}>
+          <svg viewBox="0 0 900 250" role="img" aria-label="Poison isolation">
+            <${Defs} />
+            <text class="lbl-sm" x="20" y="20">a chunk of 4, one row poisoned — the whole transaction rolls back</text>
+            ${[0, 1, 2, 3].map((n, i) => html`
+              <${M.g} key=${n} initial=${{ opacity: 0 }} whileInView=${{ opacity: 1 }}
+                viewport=${{ once: true }} transition=${{ delay: i * 0.08 }}>
+                <rect x=${20 + n * 130} y="34" width="118" height="50" rx="8"
+                  fill=${n === 1 ? '#1d1111' : '#171b25'} stroke=${n === 1 ? '#4a2626' : '#232838'} />
+                <text class="lbl" x=${34 + n * 130} y="64">${n === 1 ? 'poisoned' : 'healthy'}</text>
+              <//>`)}
+            <${Path} d="M 270 92 L 270 122" i=${0} />
+            <text class="lbl-sm" x="20" y="140">naive: charge all four an attempt → after MAX_ATTEMPTS the whole job fails with nothing moved</text>
+            <text class="lbl-sm" x="20" y="172" fill="#5ddba4">this code: re-run the same items one per transaction — isolateChunk() in bulk-move.worker.service.ts</text>
+            ${[0, 1, 2, 3].map((n, i) => html`
+              <${M.g} key=${'b' + n} initial=${{ opacity: 0, y: 8 }} whileInView=${{ opacity: 1, y: 0 }}
+                viewport=${{ once: true }} transition=${{ delay: 0.3 + i * 0.08 }}>
+                <rect x=${20 + n * 130} y="186" width="118" height="46" rx="8"
+                  fill=${n === 1 ? '#1d1111' : '#0f1f19'} stroke=${n === 1 ? '#4a2626' : '#1d4435'} />
+                <text class="lbl-sm" x=${34 + n * 130} y="214"
+                  fill=${n === 1 ? '#f58e8e' : '#5ddba4'}>${n === 1 ? 'penalised' : 'committed'}</text>
+              <//>`)}
+          </svg>
+        <//>`;
+
+      const IsolationPools = () => html`
+        <${M.div} class="card" style=${{ marginTop: 22 }} ...${rise(1)}>
+          <svg viewBox="0 0 900 230" role="img" aria-label="Connection pools">
+            <${Defs} />
+            <${Box} x="20"  y="30" w="250" h="64" title="api" file="app_interactive · limit 15 · 10s" i=${0} />
+            <${Box} x="20"  y="118" w="250" h="64" title="worker" file="app_worker · limit 3 · 30s" i=${1} />
+            <${Box} x="330" y="30" w="200" h="64" title="sweeper" file="limit 1, its own" i=${2} />
+            <${Box} x="610" y="70" w="260" h="80" fill="#101522" stroke="#1d2435"
+              title="PostgreSQL" file="roles enforce the caps" i=${3} />
+            <${Path} d="M 272 62 L 606 100" i=${0} />
+            <${Path} d="M 272 150 L 606 122" i=${1} />
+            <${Path} d="M 532 62 L 606 92" i=${2} />
+            <text class="lbl-sm" x="330" y="150">the worker can never take more than 3 backends,</text>
+            <text class="lbl-sm" x="330" y="168">no matter how much work is queued — that cap</text>
+            <text class="lbl-sm" x="330" y="186">is the isolation mechanism, not a promise</text>
+          </svg>
+        <//>`;
+
+      /* ---------- page ---------- */
+      const App = () => html`
+        <nav class="toc">
+          <div class="wrap">
+            <a href="#what">what</a><a href="#promises">five promises</a><a href="#map">file map</a>
+            <a href="#request">a request</a><a href="#job">a job</a><a href="#tricks">the clever bits</a>
+            <a href="#data">tables</a><a href="#proof">proof</a><a href="#weak">weak spots</a>
+          </div>
+        </nav>
+
+        <header style=${{ padding: '110px 0 70px' }}>
+          <div class="wrap">
+            <${M.div} ...${rise()}>
+              <div class="eyebrow">GoHighLevel SDE-3 take-home</div>
+              <h1>Move 50,000 deals<br />to another stage<br />without breaking anything.</h1>
+            <//>
+            <${M.p} ...${rise(1)} style=${{ fontSize: 19, maxWidth: 680 }}>
+              A CRM user ticks a filter and says “move all of these.” That sounds like a
+              <code>for</code> loop. At 50,000 rows it is a background job that has to survive being
+              killed, refuse to do the same work twice, stay correct while humans edit the same
+              records by hand, and never hog the database everyone else is using.
+            <//>
+            <${M.div} class="grid g3" style=${{ marginTop: 34 }} ...${rise(2)}>
+              <div class="card"><div class="kpi">9.08s</div><div class="kpi-l">to move 50,000 rows</div></div>
+              <div class="card"><div class="kpi">11.6ms</div><div class="kpi-l">p95 for other users during it</div></div>
+              <div class="card"><div class="kpi">137</div><div class="kpi-l">tests, all passing</div></div>
+            <//>
+          </div>
+        </header>
+
+        <${Section} id="what" eyebrow="the idea" title="What this thing actually is">
+          <${M.p} ...${rise(1)}>
+            Two programs talking to one PostgreSQL database. <${File}>src/app/server.ts<//> is the API
+            that answers HTTP. <${File}>src/app/worker.ts<//> is the thing that grinds through the work.
+            They share nothing except the database — no Redis, no queue broker, no message bus.
+          <//>
+          <${Donkey}>
+            <p>
+              Imagine a library. A customer hands the librarian a slip: “move every blue book from
+              shelf A to shelf B.” The librarian doesn’t carry 50,000 books right then — she writes
+              every book’s number onto a <strong>checklist</strong> and hands back a ticket number.
+              Three assistants then work through the checklist, ticking off books as they go.
+              If an assistant drops dead halfway, the checklist still says exactly which books were
+              done. That checklist is a database table called <code>job_items</code>, and it is the
+              single most important idea in this entire project.
+            </p>
+          <//>
+          <${M.div} class="grid g2" style=${{ marginTop: 20 }} ...${rise(2)}>
+            <div class="card">
+              <h3>The API</h3>
+              <p>Takes the request, writes the checklist, answers in under a second with a job id.
+              It never does the moving itself.</p>
+            </div>
+            <div class="card">
+              <h3>The worker</h3>
+              <p>Three identical loops. Each grabs a batch of 500 unticked items, moves them, ticks
+              them. No boss process hands out work — the database decides who gets what.</p>
+            </div>
+          <//>
+        <//>
+
+        <${Section} id="promises" eyebrow="the hard part" title="Five promises, and how each is kept">
+          <table>
+            <thead><tr><th>Promise</th><th>How</th><th>Where</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>Idempotent</strong><br/>retry can’t double-apply</td>
+                <td>A unique index on <code>(workspace_id, idempotency_key)</code> in Postgres. The database refuses the second job — not a check in code that two requests could both pass.</td>
+                <td><${File}>bulk-move.service.ts<//></td>
+              </tr>
+              <tr>
+                <td><strong>Resumable</strong><br/>survives a kill</td>
+                <td><code>job_items.status</code> is the cursor. A killed chunk rolls back and its rows return to <code>pending</code>. There is no saved offset that could drift.</td>
+                <td><${File}>bulk-move.worker.service.ts<//></td>
+              </tr>
+              <tr>
+                <td><strong>Observable</strong><br/>real progress</td>
+                <td>One SQL query counts committed rows every time you ask. Nothing is kept in memory, so a restart can’t make it lie.</td>
+                <td><${File}>bulk-move.repository.ts<//></td>
+              </tr>
+              <tr>
+                <td><strong>Correct under edits</strong></td>
+                <td>Every row carries a <code>version</code>. The job froze the version it expects. If a human moved the row first, the numbers differ and the job stands down.</td>
+                <td><${File}>opportunities.service.ts<//></td>
+              </tr>
+              <tr>
+                <td><strong>Well-behaved</strong></td>
+                <td>The worker’s database role is capped at 3 connections. It physically cannot take more, however much work is queued.</td>
+                <td><${File}>shared/database/prismaClients.ts<//></td>
+              </tr>
+            </tbody>
+          </table>
+        <//>
+
+        <${Section} id="map" eyebrow="the file map" title="Where everything lives">
+          <${M.p} ...${rise(1)}>
+            Four layers. Each one may only talk to the next. The rules aren’t a convention anybody
+            can forget — <${File}>eslint.config.mjs<//> fails the build if a service imports Prisma or
+            a controller reaches past its service.
+          <//>
+          <${LayerDiagram} />
+          <${Donkey}>
+            <p>
+              Think of a restaurant. The <strong>waiter</strong> (routes) only takes orders. The
+              <strong>order slip</strong> (controller) turns your words into something the kitchen
+              reads. The <strong>chef</strong> (service) decides how the dish is made. The
+              <strong>pantry</strong> (repository) is the only one allowed to touch ingredients.
+              A chef who wanders into the pantry is how you get a kitchen nobody can reason about —
+              so here, the lint rule physically stops him.
+            </p>
+          <//>
+          <table>
+            <thead><tr><th>Folder</th><th>Holds</th></tr></thead>
+            <tbody>
+              <tr><td><${File}>src/app/<//></td><td>wiring only: <code>server.ts</code>, <code>worker.ts</code>, <code>createApp.ts</code>, <code>container.ts</code></td></tr>
+              <tr><td><${File}>src/config/env.ts<//></td><td>the only file in the project that reads <code>process.env</code></td></tr>
+              <tr><td><${File}>src/modules/bulk-move/<//></td><td>the exercise: submission, progress, retry, and the worker’s own service + repository</td></tr>
+              <tr><td><${File}>src/modules/opportunities/<//></td><td>create, single manual move, paginated listing</td></tr>
+              <tr><td><${File}>src/modules/workspaces/<//></td><td>one question: does this tenant exist?</td></tr>
+              <tr><td><${File}>src/shared/<//></td><td>errors, middleware, database clients, logger, worker runtime</td></tr>
+              <tr><td><${File}>src/jobs/registry.ts<//></td><td>the list of background job kinds, in one place</td></tr>
+            </tbody>
+          </table>
+        <//>
+
+        <${Section} id="request" eyebrow="one request" title="What happens when you call the API">
+          <${M.div} class="card" ...${rise(1)}>
+            <pre class="mono" style=${{ margin: 0, color: '#9aa3b8', fontSize: 13, lineHeight: 1.9, overflowX: 'auto' }}>
+requestId()        give the request an id for the logs        shared/middleware/requestId.ts
+express.json()     parse the body, reject anything over 1mb
+workspaceScope()   X-Workspace-Id → req.workspaceId           shared/middleware/workspaceScope.ts
+validate(schema)   zod checks body/params/query               shared/middleware/validate.ts
+controller         pull validated input, call the service     *.controller.ts
+service            the actual rules; opens the transaction    *.service.ts
+repository         the only SQL in the module                 *.repository.ts
+errorHandler()     anything thrown becomes the JSON error     shared/middleware/errorHandler.ts</pre>
+          <//>
+          <${Donkey}>
+            <p>
+              A bouncer checks your ticket (<code>workspaceScope</code>), a form-checker makes sure you
+              filled the form in properly (<code>validate</code>), and only then does anyone go get your
+              thing. If <em>anything</em> goes wrong anywhere, exactly one person is allowed to come
+              out and tell you — <code>errorHandler</code>. That’s why every error in this API looks the
+              same: <code>{"{ error: { code, message } }"}</code>.
+            </p>
+          <//>
+        <//>
+
+        <${Section} id="job" eyebrow="one job" title="What happens after you hit submit">
+          <${JobDiagram} />
+          <${M.p} ...${rise(2)}>
+            Submission takes a <strong>snapshot</strong>: it writes one <code>job_items</code> row per
+            matching opportunity, inside the same transaction that creates the job. The filter is
+            saved for display but <strong>never run again</strong>. A row created after you submitted
+            is not part of your job, and a row edited out of the filter still gets moved.
+          <//>
+          <${Donkey}>
+            <p>
+              It’s a wedding guest list. You decide who’s invited on Monday. If someone moves to town
+              on Tuesday, they don’t get a seat — the list was already printed. If you re-ran the
+              filter at serving time instead, you could never answer “how far along are we?”, because
+              the denominator would keep moving.
+            </p>
+          <//>
+          <${CursorDiagram} />
+        <//>
+
+        <${Section} id="tricks" eyebrow="the clever bits" title="The five things worth understanding">
+          <${M.div} class="grid g2" style=${{ marginTop: 20 }} ...${rise(1)}>
+            <div class="card">
+              <h3>1. SKIP LOCKED</h3>
+              <p><code>SELECT … FOR UPDATE SKIP LOCKED</code> lets three loops run the exact same
+              query and each walk away with different rows. No coordinator, no locks waiting.</p>
+              <p><span class="pill">bulk-move.worker.repository.ts</span></p>
+            </div>
+            <div class="card">
+              <h3>2. Claim and apply in one transaction</h3>
+              <p>If you claimed rows, committed, then applied them separately, the locks drop in
+              between — and a human edit could land in that gap and get silently overwritten.</p>
+              <p><span class="pill">bulk-move.worker.service.ts</span></p>
+            </div>
+            <div class="card">
+              <h3>3. A partial unique index</h3>
+              <p><code>UNIQUE (job_id, opportunity_id) WHERE job_id IS NOT NULL</code> on
+              <code>transitions</code>. Applying the same row twice isn’t “detected” — the database
+              makes it <em>impossible</em>.</p>
+              <p><span class="pill">prisma/migrations/</span></p>
+            </div>
+            <div class="card">
+              <h3>4. One bad row costs one row</h3>
+              <p>A chunk is one transaction, so one poisoned row rolls back 499 innocent ones. The
+              fix: re-run those items one per transaction, so only the guilty row is punished.</p>
+              <p><span class="pill">isolateChunk()</span></p>
+            </div>
+          <//>
+          <${IsolationDiagram} />
+          <${M.div} style=${{ marginTop: 34 }} ...${rise(2)}><h3>5. The connection cap is the isolation</h3><//>
+          <${IsolationPools} />
+          <${Donkey}>
+            <p>
+              The worker is given exactly three keys to the database. It doesn’t matter how much work
+              piles up — it can never hold a fourth. That’s why a 50,000-row job barely moved everyone
+              else’s response time: <strong>11.4ms → 11.6ms</strong>. Not because the code is polite,
+              but because it physically cannot be greedy.
+            </p>
+          <//>
+        <//>
+
+        <${Section} id="data" eyebrow="the tables" title="Four tables, and what each is for">
+          <table>
+            <thead><tr><th>Table</th><th>One row per</th><th>Why it matters</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">opportunities</td><td>a deal</td><td>carries <code>version</code> — the whole collision mechanism</td></tr>
+              <tr><td class="mono">jobs</td><td>a submission</td><td>idempotency key + request fingerprint live here</td></tr>
+              <tr><td class="mono">job_items</td><td>an enrolled deal</td><td>the checklist. <code>status</code> is the cursor</td></tr>
+              <tr><td class="mono">transitions</td><td>a stage change</td><td>audit trail. <code>job_id IS NULL</code> means a human did it</td></tr>
+            </tbody>
+          </table>
+          <${Donkey}>
+            <p>
+              <code>job_items</code> is doing three jobs at once and that’s deliberate: it is the
+              <strong>list of work</strong>, the <strong>progress bar</strong>, and the
+              <strong>bookmark</strong> you resume from. One table, so those three things can never
+              disagree with each other.
+            </p>
+          <//>
+        <//>
+
+        <${Section} id="proof" eyebrow="proof" title="Numbers, measured — not estimated">
+          <${M.div} class="grid g3" ...${rise(1)}>
+            <div class="card"><div class="kpi">714ms</div><div class="kpi-l">to enrol 50,000 rows</div></div>
+            <div class="card"><div class="kpi">5,506</div><div class="kpi-l">rows moved per second</div></div>
+            <div class="card"><div class="kpi">0</div><div class="kpi-l">rows applied twice after a kill</div></div>
+          <//>
+          <${M.p} ...${rise(2)}>
+            137 automated tests, plus a run where the worker process is genuinely <code>SIGKILL</code>ed
+            at 15,000 of 50,000 and a fresh process finishes the job. The whole stack was also driven
+            by hand with curl — 41 checks covering every endpoint and every error code. It’s all in
+            <${File}>VERIFICATION.md<//> and <${File}>BENCHMARKS.md<//>.
+          <//>
+        <//>
+
+        <${Section} id="weak" eyebrow="honesty" title="Where it is still weak">
+          <${M.p} ...${rise(1)}>
+            Written down on purpose, because a write-up that knows its own gaps is worth more than one
+            that pretends there are none. The full list is in <${File}>DESIGN.md<//>.
+          <//>
+          <${M.div} class="grid g2" style=${{ marginTop: 18 }} ...${rise(2)}>
+            <div class="card">
+              <p><span class="pill no">latency</span></p>
+              <h3>Enrolment is synchronous</h3>
+              <p>Writing 50,000 checklist rows happens while the caller waits. At 10× the filter’s
+              sort spills to disk. First thing to fix with another week.</p>
+            </div>
+            <div class="card">
+              <p><span class="pill no">fairness</span></p>
+              <h3>Tenants don’t take turns</h3>
+              <p>One workspace submitting ten jobs shares the same three connections with everyone
+              else’s background work.</p>
+            </div>
+            <div class="card">
+              <p><span class="pill no">ops</span></p>
+              <h3>Shutdown never runs in Docker</h3>
+              <p>The container command is <code>npx ts-node …</code>, so <code>npx</code> is PID 1 and
+              eats the signal. Data is safe — a killed chunk rolls back — but the exit code lies.</p>
+            </div>
+            <div class="card">
+              <p><span class="pill no">security</span></p>
+              <h3>There is no authentication</h3>
+              <p>Out of scope per the brief. <code>X-Workspace-Id</code> is trusted, so every tenant
+              guarantee here assumes something in front has already checked who you are.</p>
+            </div>
+          <//>
+        <//>
+
+        <footer>
+          <div class="wrap">
+            Built from the repo as it stands. Deeper reading:
+            <${File}>DESIGN.md<//> for the reasoning, <${File}>BENCHMARKS.md<//> for the measurements,
+            <${File}>VERIFICATION.md<//> for what was actually executed.
+          </div>
+        </footer>`;
+
+      createRoot(document.getElementById('root')).render(html`<${App} />`);
+    </script>
+  </body>
+</html>
