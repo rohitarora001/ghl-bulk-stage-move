@@ -134,3 +134,22 @@ had been suite-only: 1.2 MB body → 413, create with a stage outside its pipeli
 another pipeline or tenant, the same-stage no-op that does not bump the version, unknown
 opportunity → 404, and the three bulk-move stage errors. Plus the four classification states — see
 [[module-api-observability]].
+
+## docs/explainer.html (commit b3ca67f)
+
+A self-contained illustrated walkthrough: what the system is, the five brief properties and how
+each is kept, the file map, request and job lifecycles, the five load-bearing ideas, the four
+tables, measured numbers, and the weak spots. Each section pairs the technical account with a
+plain-language analogy.
+
+**No build step.** React 18, Framer Motion 11 and htm load as ES modules from a pinned import map
+(`framer-motion@11.3.24?external=react` so React is not duplicated); `htm/react` supplies the
+template tag in place of JSX. Opening the file in a browser is enough.
+
+Diagrams are inline SVG animated on scroll via `whileInView` with `once: true`, and every box
+carries the real filename it describes, so the page reads alongside the source.
+
+Gotcha: the file is in `.prettierignore` only by virtue of living outside the ignored list — it is
+**not** ignored, so `npm run format` will reformat it. Verify after formatting with
+`node --check` on the extracted module block.
+
